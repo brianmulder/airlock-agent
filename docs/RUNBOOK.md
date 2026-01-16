@@ -1,0 +1,119 @@
+# Airlock Runbook
+
+This runbook is a step-by-step tutorial for installing, using, and dogfooding Airlock.
+
+## 1) Prerequisites
+
+- Windows 11 with WSL2.
+- Docker Desktop installed and running with WSL integration enabled.
+- Dropbox installed on Windows with a dedicated context subfolder (example: `Dropbox\\fred`).
+- A WSL distro with `sudo` access.
+
+## 2) Harden WSL and Mount Context
+
+Follow `docs/WSL_HARDENING.md` to:
+
+- Disable automatic Windows drive mounts.
+- Mount only your context subfolder into WSL (not all of Dropbox).
+
+## 3) Install Airlock via Stow
+
+Required:
+
+```bash
+sudo apt-get update && sudo apt-get install -y stow
+stow -d ~/code/github.com/brianmulder/airlock/stow -t ~ airlock
+hash -r
+```
+
+You should now have:
+
+- `~/bin/yolo`
+- `~/bin/airlock-build`
+- `~/bin/airlock-doctor`
+- `~/.airlock/policy/*`
+- `~/.airlock/image/*`
+
+## 4) Build the Agent Image
+
+Required:
+
+```bash
+airlock-build
+```
+
+Default base image: `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm`.
+
+Examples (optional):
+
+```bash
+AIRLOCK_BASE_IMAGE=mcr.microsoft.com/devcontainers/typescript-node:20-bookworm airlock-build
+AIRLOCK_CODEX_VERSION=0.84.0 airlock-build
+```
+
+## 5) Validate the Environment
+
+Required:
+
+```bash
+airlock-doctor
+```
+
+Fix any warnings before proceeding (most issues are WSL mount or Docker connectivity).
+
+## 6) Daily Use
+
+From a WSL-native repo (ext4, not `/mnt/c`):
+
+Required:
+
+```bash
+cd ~/code/your-project
+yolo
+```
+
+Inside the container:
+
+Required:
+
+```bash
+codex
+```
+
+## 7) Review + Promote Outputs
+
+- Agent artifacts are written to `~/.airlock/outbox/drafts/`.
+- Review in WSL (Neovim, git diff).
+- Manually copy approved outputs into your repo or Dropbox:
+
+Example:
+
+```bash
+cp ~/.airlock/outbox/drafts/thing.patch ~/dropbox/fred/outbox/reviewed/
+```
+
+## 8) Dogfooding from Dotfiles (Stow)
+
+### Option A — Submodule (recommended)
+
+```bash
+cd ~/code/github.com/brianmulder/dotfiles
+mkdir -p vendor
+
+git submodule add https://github.com/brianmulder/airlock vendor/airlock
+stow -d vendor/airlock/stow -t ~ airlock
+```
+
+### Option B — Vendor the stow package
+
+Copy `stow/airlock/` into your dotfiles repo and:
+
+```bash
+stow -t ~ airlock
+```
+
+## 9) Troubleshooting
+
+- If `/mnt/c` appears, re-check `/etc/wsl.conf` and run `wsl --shutdown`.
+- If `airlock-build` fails, confirm Docker Desktop is running.
+- If context is missing, confirm your `/etc/fstab` entry and Dropbox path.
