@@ -3,17 +3,17 @@
 ## Project Structure & Module Organization
 
 - `chat-gpt-5.2-pro-extended-thinking.md`: the working technical specification for “The Airlock” (WSL + Docker “data diode” workflow).
-- If you add more documentation, prefer grouping it under `docs/` (e.g., `docs/architecture.md`, `docs/threat-model.md`) to keep the repo root tidy.
-- If/when automation is added, use:
-  - `scripts/` for runnable helpers (e.g., `scripts/yolo`, `scripts/preflight`)
-  - `config/` for templates/snippets (e.g., `config/wsl.conf`, `config/fstab`)
+- `docs/`: runbook, WSL hardening, threat model, spec addendum.
+- `stow/airlock/`: GNU Stow package installed into `$HOME` (binaries + `~/.airlock` templates).
+- `scripts/`: repo-local helpers (install/uninstall and test entrypoints).
 
 ## Build, Test, and Development Commands
 
-This repository is currently documentation-only (no checked-in build/test runner).
-
-- Optional Markdown lint: `npx markdownlint-cli2 "**/*.md"` (requires Node) or your preferred linter.
-- Docker/WSL commands live in the spec; keep them copy-pasteable and clearly labeled as **examples** vs **required** steps.
+- Lint + tests: `./scripts/test.sh`
+- Lint only: `./scripts/test-lint.sh`
+- Unit tests only (no container engine required): `./scripts/test-unit.sh`
+- System smoke test (requires container engine + stow): `./scripts/test-system.sh`
+- Engine selection: prefix commands with `AIRLOCK_ENGINE=docker|podman|nerdctl` (default: `docker`)
 
 ## Coding Style & Naming Conventions
 
@@ -24,11 +24,13 @@ This repository is currently documentation-only (no checked-in build/test runner
 
 ## Testing Guidelines
 
-- No automated tests yet. If you add code/scripts, include a minimal smoke test and document a single entrypoint to run it (e.g., `./scripts/test.sh`).
+- Prefer “sandboxed” validation: tests should use temporary directories and containers rather than touching real `$HOME`.
+- Keep unit tests engine-free where possible (use `AIRLOCK_DRY_RUN=1` and stub engines like `AIRLOCK_ENGINE=true`).
+- System tests should validate the full flow: stow → build → yolo → mount/network checks.
 
 ## Commit & Pull Request Guidelines
 
-- Git history isn’t available in this checkout; default to Conventional Commits (e.g., `docs: …`, `feat: …`, `fix: …`).
+- Use Conventional Commits (e.g., `docs: …`, `feat: …`, `fix: …`).
 - PRs should describe security impact (mounts, permissions, networking), link any related issue, and include diagram screenshots when visuals change.
 
 ## Security & Configuration Tips

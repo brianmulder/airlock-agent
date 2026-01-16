@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
+
+# Two-way door: swap base image without changing code
+AIRLOCK_BASE_IMAGE="${AIRLOCK_BASE_IMAGE:-mcr.microsoft.com/devcontainers/javascript-node:20-bookworm}"
+
+# Two-way door: pin or float Codex CLI
+AIRLOCK_CODEX_VERSION="${AIRLOCK_CODEX_VERSION:-latest}"
+
+BUILD_CONTEXT="$HOME/.airlock/image"
+DOCKERFILE="$BUILD_CONTEXT/agent.Dockerfile"
+
+if [[ ! -f "$DOCKERFILE" ]]; then
+  echo "ERROR: missing Dockerfile at $DOCKERFILE"
+  echo "Did you stow the package?  stow -d <repo>/stow -t ~ airlock"
+  exit 1
+fi
+
+command -v "$AIRLOCK_ENGINE" >/dev/null || {
+  echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
+  echo "Set AIRLOCK_ENGINE=docker|podman|nerdctl (or adjust PATH)."
+  exit 1
+}
+
+echo "--- Building Airlock agent image ---"
+echo "Engine:     $AIRLOCK_ENGINE"
+echo "Image:      $AIRLOCK_IMAGE"
+echo "Base image: $AIRLOCK_BASE_IMAGE"
+echo "Codex:      @openai/codex@$AIRLOCK_CODEX_VERSION"
+echo "Context:    $BUILD_CONTEXT"
+echo "---------------------------------------"
+
+cmd=(
+  "$AIRLOCK_ENGINE" build
+  --pull
+  -t "$AIRLOCK_IMAGE"
+  --build-arg "BASE_IMAGE=$AIRLOCK_BASE_IMAGE"
+  --build-arg "CODEX_VERSION=$AIRLOCK_CODEX_VERSION"
+  -f "$DOCKERFILE"
+  "$BUILD_CONTEXT"
+)
+
+if [[ "${AIRLOCK_DRY_RUN:-0}" == "1" ]]; then
+  printf 'CMD:'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+  exit 0
+fi
+
+"${cmd[@]}"

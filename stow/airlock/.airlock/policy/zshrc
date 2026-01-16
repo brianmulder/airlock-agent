@@ -1,0 +1,4 @@
+export PATH="$PATH:/work/node_modules/.bin"
+setopt PROMPT_SUBST
+autoload -U colors && colors
+PROMPT='%F{cyan}airlock%f:%F{yellow}%~%f %# '

@@ -5,9 +5,15 @@ This runbook is a step-by-step tutorial for installing, using, and dogfooding Ai
 ## 1) Prerequisites
 
 - Windows 11 with WSL2.
-- Docker Desktop installed and running with WSL integration enabled.
+- A container engine (default: Docker Desktop) with WSL integration enabled.
 - Dropbox installed on Windows with a dedicated context subfolder (example: `Dropbox\\fred`).
 - A WSL distro with `sudo` access.
+
+Supported engines (set `AIRLOCK_ENGINE` to select):
+
+- `docker` (Docker Desktop)
+- `nerdctl` (commonly used with Rancher Desktop / containerd)
+- `podman` (Podman / Podman Desktop)
 
 ## 2) Harden WSL and Mount Context
 
@@ -47,6 +53,7 @@ Default base image: `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm
 Examples (optional):
 
 ```bash
+AIRLOCK_ENGINE=podman airlock-build
 AIRLOCK_BASE_IMAGE=mcr.microsoft.com/devcontainers/typescript-node:20-bookworm airlock-build
 AIRLOCK_CODEX_VERSION=0.84.0 airlock-build
 ```
@@ -72,6 +79,12 @@ cd ~/code/your-project
 yolo
 ```
 
+Example (optional engine selection):
+
+```bash
+AIRLOCK_ENGINE=nerdctl yolo
+```
+
 Inside the container:
 
 Required:
@@ -80,7 +93,15 @@ Required:
 codex
 ```
 
-## 7) Review + Promote Outputs
+## 7) Smoke Test (No Agent)
+
+This validates mounts and basic mechanics without running `codex`:
+
+```bash
+yolo -- bash -lc 'set -e; touch /work/ok; touch /drafts/ok; ! touch /context/nope'
+```
+
+## 8) Review + Promote Outputs
 
 - Agent artifacts are written to `~/.airlock/outbox/drafts/`.
 - Review in WSL (Neovim, git diff).
@@ -92,7 +113,7 @@ Example:
 cp ~/.airlock/outbox/drafts/thing.patch ~/dropbox/fred/outbox/reviewed/
 ```
 
-## 8) Dogfooding from Dotfiles (Stow)
+## 9) Dogfooding from Dotfiles (Stow)
 
 ### Option A — Submodule (recommended)
 
@@ -112,7 +133,7 @@ Copy `stow/airlock/` into your dotfiles repo and:
 stow -t ~ airlock
 ```
 
-## 9) Troubleshooting
+## 10) Troubleshooting
 
 - If `/mnt/c` appears, re-check `/etc/wsl.conf` and run `wsl --shutdown`.
 - If `airlock-build` fails, confirm Docker Desktop is running.

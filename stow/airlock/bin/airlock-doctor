@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+ok() { echo "OK: $*"; }
+
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
+AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/dropbox/fred}"
+
+req() { [[ -e "$1" ]] || fail "missing: $1"; }
+
+req "$AIRLOCK_HOME/policy/codex.config.toml"
+req "$AIRLOCK_HOME/image/agent.Dockerfile"
+req "$HOME/bin/yolo"
+req "$HOME/bin/airlock-build"
+req "$HOME/bin/airlock-doctor"
+
+if [[ -d "$AIRLOCK_CONTEXT_DIR" ]]; then
+  ok "context dir exists: $AIRLOCK_CONTEXT_DIR"
+else
+  echo "WARN: context dir not found at $AIRLOCK_CONTEXT_DIR (did you mount Dropbox in WSL yet?)"
+fi
+
+command -v "$AIRLOCK_ENGINE" >/dev/null || fail "container engine not found: $AIRLOCK_ENGINE"
+if "$AIRLOCK_ENGINE" info >/dev/null 2>&1; then
+  ok "engine reachable: $AIRLOCK_ENGINE"
+else
+  fail "engine not reachable (is it running and configured?): $AIRLOCK_ENGINE"
+fi
+
+IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
+if "$AIRLOCK_ENGINE" image inspect "$IMAGE" >/dev/null 2>&1; then
+  ok "agent image present: $IMAGE"
+else
+  echo "WARN: agent image missing: $IMAGE (run: airlock-build)"
+fi
+
+if [[ -d /mnt/c ]]; then
+  echo "WARN: /mnt/c exists. If you intended no Windows drives, check /etc/wsl.conf automount settings."
+else
+  ok "/mnt/c not present (good)"
+fi
+
+ok "basic checks complete"

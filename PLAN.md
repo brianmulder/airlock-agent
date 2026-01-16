@@ -9,6 +9,7 @@ stow-installable repo that you can dogfood from your dotfiles.
 - Provide a safe default workflow: RO context (`/context`), RW workspace (`/work`), RW outbox (`/drafts`)
   on WSL ext4 (not inside Dropbox).
 - Use a high-quality devcontainer base image by default, but keep it a “two-way door” (easy to swap).
+- Support multiple container engines via `AIRLOCK_ENGINE` (default `docker`; also `podman`, `nerdctl`).
 
 ## Non-goals (v0.1)
 
@@ -16,11 +17,25 @@ stow-installable repo that you can dogfood from your dotfiles.
 - Managing Dropbox/WSL/Docker Desktop installation for the user.
 - Supporting every shell/OS combination outside Windows + WSL2.
 
+## Testing Strategy (Sandboxed)
+
+Tests should be runnable without touching the real `$HOME` by using temporary directories and
+ephemeral containers.
+
+- Lint: `bash -n` and `shellcheck` (when installed) for all scripts.
+- Unit tests: validate script behavior without a real engine by using `AIRLOCK_DRY_RUN=1` and stub
+  engines (e.g., `AIRLOCK_ENGINE=true`).
+- System smoke test: validate the full flow (stow → build → yolo → mount + network sanity checks),
+  using a temp `$HOME` and a temp workspace/context. This must **not** run `codex`; it should prove
+  the mechanics without the agent.
+- Engine matrix: system test should run at least on `docker`; it should also be runnable on
+  community-supported alternatives like `podman` and `nerdctl` when available.
+
 ## Phase 0 — Prereqs and Baseline Validation
 
 1. Confirm environment assumptions:
    - Windows 11 + WSL2 distro available.
-   - Docker Desktop installed, running, and WSL integration enabled.
+   - A container engine installed/running with WSL integration enabled (Docker Desktop or an alternative).
    - Dropbox folder present on Windows, and a dedicated context subfolder exists (e.g. `Dropbox\\fred`).
 2. Apply WSL hardening (documented steps):
    - `/etc/wsl.conf`: disable automount; optionally disable interop.
@@ -59,6 +74,7 @@ Definition of done:
 3. Quality gates:
    - `stow -d ./stow -t ~ airlock` is idempotent (repeatable with no surprises).
    - `airlock-doctor` validates required files and key environmental prerequisites.
+   - Unit tests pass without a running container engine (`./scripts/test-unit.sh`).
 
 Definition of done:
 - A user can install/uninstall cleanly with Stow (or via `scripts/install.sh`).
@@ -99,6 +115,7 @@ Definition of done:
    - `touch /drafts/ok` succeeds.
    - `touch /work/ok` succeeds.
    - No unintentional host path mounts are present (`mount` output only shows explicit binds).
+   - Smoke test can run without the agent: `yolo -- bash -lc '...'`.
 
 Definition of done:
 - The “data diode” behavior is real in practice: RO context stays RO; artifacts land in quarantine.
@@ -121,18 +138,29 @@ Definition of done:
 Definition of done:
 - Documentation is sufficient to reproduce the setup on a new WSL install.
 
-## Phase 6 — Quality Gates Automation (Recommended)
+## Phase 6 — Tests and Quality Gates (Lint / Unit / System)
 
-1. Add lightweight checks (local + CI where possible):
-   - `shellcheck` for `bin/*` and `scripts/*`
-   - Markdown linting (optional)
-2. Add a GitHub Actions workflow to run the checks on PRs (optional but high leverage).
-3. Quality gates:
-   - CI passes on a clean runner.
-   - Scripts remain POSIX-ish (or clearly marked as bash-only).
+1. Add local test entrypoints:
+   - `./scripts/test-lint.sh` (bash syntax + shellcheck when available)
+   - `./scripts/test-unit.sh` (engine-free validation)
+   - `./scripts/test-system.sh` (smoke test: stow → build → yolo → checks)
+   - `./scripts/test.sh` (runs all of the above)
+2. System smoke test requirements:
+   - Uses a temp `$HOME` and temp dirs for context/workspace/drafts.
+   - Runs `yolo` with a command override (no interactive prompt required).
+   - Validates RO/RW mounts and basic network namespace config (bridge by default).
+3. Engine support requirements:
+   - Add `AIRLOCK_ENGINE` to scripts (`airlock-build`, `airlock-doctor`, `yolo`).
+   - Test matrix: `docker` required; `podman`/`nerdctl` best-effort if installed.
+4. Add CI (recommended):
+   - Run lint + unit tests on every PR.
+   - Run system smoke test on a runner with a working engine.
+5. Quality gates:
+   - `./scripts/test.sh` passes locally (or produces clear SKIP output for missing system deps).
+   - CI passes for lint + unit; system smoke passes in at least one engine environment.
 
 Definition of done:
-- Regressions in scripts/docs are caught before merge.
+- Regressions in scripts/config/stow/container plumbing are caught before merge.
 
 ## Phase 7 — Dogfood in Your Dotfiles Repo
 
@@ -149,7 +177,7 @@ Definition of done:
 
 1. Tag a first release (e.g., `v0.1.0`) after dogfooding.
 2. Document maintenance expectations:
-   - Update cadence for Docker Desktop and base images.
+   - Update cadence for Docker Desktop / alternative engines and base images.
    - How to pin Codex CLI version (`AIRLOCK_CODEX_VERSION`).
 
 Definition of done:
@@ -172,5 +200,6 @@ Create `docs/SPEC_v2.1_ADDENDUM.md` capturing at least:
   `~/.airlock/{policy,image}` templates.
 - `airlock-build` produces a runnable image (default base + overrideable base).
 - `yolo` launches a container that enforces RO `/context` and RW `/drafts` on ext4.
-- `airlock-doctor` passes on a standard WSL2 + Docker Desktop setup.
+- `airlock-doctor` passes on a standard WSL2 + container engine setup.
+- `./scripts/test.sh` provides lint + unit + smoke coverage for stow/image/yolo mechanics.
 - Docs in `docs/RUNBOOK.md` reproduce the setup end-to-end.

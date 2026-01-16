@@ -6,7 +6,7 @@ Docker container), with a strict filesystem boundary and a review-first outbox.
 
 ## Quickstart
 
-1. Install prerequisites (WSL2, Docker Desktop, Dropbox).
+1. Install prerequisites (WSL2, a container engine, Dropbox).
 2. Apply WSL hardening and mount only your context folder (see `docs/WSL_HARDENING.md`).
 3. Install Airlock via GNU Stow:
 
@@ -53,5 +53,11 @@ codex
 - `/drafts` is read-write on WSL ext4 (quarantine for agent outputs).
 - `/work` is the only editable source of truth (project repo).
 - Host networking is opt-in (`AIRLOCK_NETWORK=host`).
+
+## Testing (Repo)
+
+```bash
+./scripts/test.sh
+```
 
 See `docs/RUNBOOK.md` for the full tutorial.
