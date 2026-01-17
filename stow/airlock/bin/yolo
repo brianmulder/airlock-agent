@@ -22,6 +22,7 @@ Key env vars:
   AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
+  AIRLOCK_TIMING=1                      Print coarse timing around engine run (also enables entrypoint timing)
   AIRLOCK_DRY_RUN=1                     Print the engine command and exit
 USAGE
 }
@@ -136,6 +137,7 @@ cmd=(
   --name "$AIRLOCK_CONTAINER_NAME"
   -e "AIRLOCK_UID=$AIRLOCK_UID"
   -e "AIRLOCK_GID=$AIRLOCK_GID"
+  -e "AIRLOCK_TIMING=${AIRLOCK_TIMING:-0}"
   -e "HOME=/home/airlock"
   -e "CODEX_HOME=/home/airlock/.codex"
   -v "$WORK_DIR":/work:rw
@@ -163,4 +165,21 @@ if [[ "${AIRLOCK_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
+if [[ "${AIRLOCK_TIMING:-0}" == "1" ]]; then
+  host_start="$(date -Iseconds 2>/dev/null || true)"
+  start_ns="$(date +%s%N 2>/dev/null || true)"
+  echo "TIMING: host start: ${host_start:-unknown}" >&2
+fi
+
 "${cmd[@]}"
+
+if [[ "${AIRLOCK_TIMING:-0}" == "1" ]]; then
+  end_ns="$(date +%s%N 2>/dev/null || true)"
+  if [[ -n "${start_ns:-}" && -n "${end_ns:-}" ]]; then
+    elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
+    echo "TIMING: host end: +${elapsed_ms}ms" >&2
+  else
+    host_end="$(date -Iseconds 2>/dev/null || true)"
+    echo "TIMING: host end: ${host_end:-unknown}" >&2
+  fi
+fi

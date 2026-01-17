@@ -8,9 +8,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 tmp="$(mktemp -d)"
-cleanup() {
-  rm -rf "$tmp"
-}
+cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 
 home_dir="$tmp/home"
@@ -27,23 +25,18 @@ printf '%s\n' "hello" >"$context_dir/hello.txt"
 
 ok "unit setup"
 
-## config sanity: codex.config.toml is valid TOML
-if command -v python3 >/dev/null 2>&1; then
-  if python3 -c 'import tomllib' >/dev/null 2>&1; then
-    python3 - <<'PY'
+## config sanity: codex.config.toml is valid TOML (use repo venv, no system python changes)
+./scripts/venv.sh
+PYTHON="${AIRLOCK_VENV_DIR:-$REPO_ROOT/.venv}/bin/python"
+
+"$PYTHON" - <<'PY'
 import pathlib
 import tomllib
 
 path = pathlib.Path("stow/airlock/.airlock/policy/codex.config.toml")
 tomllib.loads(path.read_text(encoding="utf-8"))
 PY
-    ok "codex.config.toml parses (python tomllib): ok"
-  else
-    echo "WARN: python3 tomllib not available; skipping TOML parse check."
-  fi
-else
-  echo "WARN: python3 not found; skipping TOML parse check."
-fi
+ok "codex.config.toml parses (tomllib): ok"
 
 ## yolo guardrail: drafts inside context must fail
 if AIRLOCK_ENGINE=true \
@@ -127,12 +120,14 @@ out="$(
   AIRLOCK_IMAGE=airlock-agent:test \
   AIRLOCK_BASE_IMAGE=example/base:latest \
   AIRLOCK_CODEX_VERSION=0.0.0 \
+  AIRLOCK_NPM_VERSION=9.9.9 \
   stow/airlock/bin/airlock-build
 )"
 printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected airlock-build dry-run to print CMD:"
 printf '%s\n' "$out" | grep -q -- ' build ' || fail "expected airlock-build to use engine build"
 printf '%s\n' "$out" | grep -q -- 'BASE_IMAGE=example/base:latest' || fail "expected BASE_IMAGE build-arg"
 printf '%s\n' "$out" | grep -q -- 'CODEX_VERSION=0.0.0' || fail "expected CODEX_VERSION build-arg"
+printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=9.9.9' || fail "expected NPM_VERSION build-arg"
 ok "airlock-build dry-run: ok"
 
 ## airlock-build: podman defaults isolation to chroot

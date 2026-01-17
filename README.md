@@ -61,4 +61,8 @@ codex
 ./scripts/test.sh
 ```
 
+Notes:
+- `./scripts/test-unit.sh` bootstraps a repo-local venv at `./.venv/` using Python 3.11+ (for `tomllib`).
+  Set `AIRLOCK_PYTHON_BIN=python3.11` if needed.
+
 See `docs/RUNBOOK.md` for the full tutorial.

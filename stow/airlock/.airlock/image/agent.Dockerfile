@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 USER root
 
 ARG CODEX_VERSION=latest
+ARG NPM_VERSION=latest
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Minimal extras for Airlock portability
@@ -16,6 +17,9 @@ RUN apt-get update && apt-get install -y \
     gosu \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Keep npm current (two-way door via NPM_VERSION)
+RUN npm install -g npm@${NPM_VERSION}
 
 # Install Codex CLI
 RUN npm install -g @openai/codex@${CODEX_VERSION}

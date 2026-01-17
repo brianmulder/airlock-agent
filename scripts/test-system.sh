@@ -7,7 +7,21 @@ ok() { echo "OK: $*"; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+pick_engine() {
+  local engine
+  for engine in docker podman nerdctl; do
+    if command -v "$engine" >/dev/null 2>&1; then
+      echo "$engine"
+      return 0
+    fi
+  done
+  return 1
+}
+
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-}"
+if [[ -z "$AIRLOCK_ENGINE" ]]; then
+  AIRLOCK_ENGINE="$(pick_engine || true)"
+fi
 
 if ! command -v stow >/dev/null 2>&1; then
   echo "SKIP: stow not found; system smoke test requires stow."
@@ -15,12 +29,7 @@ if ! command -v stow >/dev/null 2>&1; then
 fi
 
 if ! command -v "$AIRLOCK_ENGINE" >/dev/null 2>&1; then
-  echo "SKIP: engine not found: $AIRLOCK_ENGINE"
-  exit 0
-fi
-
-if ! "$AIRLOCK_ENGINE" info >/dev/null 2>&1; then
-  echo "SKIP: engine not reachable: $AIRLOCK_ENGINE"
+  echo "SKIP: engine not found: ${AIRLOCK_ENGINE:-<unset>}"
   exit 0
 fi
 
@@ -35,6 +44,13 @@ cleanup() {
   rm -rf "$tmp"
 }
 trap cleanup EXIT
+
+engine_info_err="$tmp/engine-info.err"
+if ! "$AIRLOCK_ENGINE" info >/dev/null 2>"$engine_info_err"; then
+  echo "SKIP: engine not reachable: $AIRLOCK_ENGINE"
+  sed -n '1,25p' "$engine_info_err" | sed 's/^/  /' >&2 || true
+  exit 0
+fi
 
 home_dir="$tmp/home"
 context_dir="$tmp/context"

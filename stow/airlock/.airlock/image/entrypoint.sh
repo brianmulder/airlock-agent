@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${AIRLOCK_TIMING:-0}" == "1" ]]; then
+  now="$(date -Iseconds 2>/dev/null || true)"
+  echo "TIMING: entrypoint start: ${now:-unknown} uid=$(id -u) gid=$(id -g)" >&2
+fi
+
 TARGET_UID="${AIRLOCK_UID:-1000}"
 TARGET_GID="${AIRLOCK_GID:-1000}"
 FALLBACK_USER="${AIRLOCK_USER:-airlock}"

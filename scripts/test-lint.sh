@@ -14,6 +14,7 @@ shell_files=(
   scripts/test-lint.sh
   scripts/test-unit.sh
   scripts/test-system.sh
+  scripts/venv.sh
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/yolo
@@ -40,6 +41,7 @@ exec_files=(
   scripts/test-lint.sh
   scripts/test-unit.sh
   scripts/test-system.sh
+  scripts/venv.sh
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/yolo

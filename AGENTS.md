@@ -14,6 +14,11 @@
 - Unit tests only (no container engine required): `./scripts/test-unit.sh`
 - System smoke test (requires container engine + stow): `./scripts/test-system.sh`
 - Engine selection: prefix commands with `AIRLOCK_ENGINE=docker|podman|nerdctl` (default: `docker`)
+- Timing/debug: set `AIRLOCK_TIMING=1` to timestamp `yolo` + container entrypoint startup.
+- Image build knobs:
+  - `AIRLOCK_PULL=1|0` (default `1`)
+  - `AIRLOCK_BUILD_ISOLATION=chroot|oci|...` (Podman defaults to `chroot` on WSL)
+  - `AIRLOCK_NPM_VERSION=latest|<ver>` (default `latest`)
 
 ## Coding Style & Naming Conventions
 
@@ -27,6 +32,18 @@
 - Prefer “sandboxed” validation: tests should use temporary directories and containers rather than touching real `$HOME`.
 - Keep unit tests engine-free where possible (use `AIRLOCK_DRY_RUN=1` and stub engines like `AIRLOCK_ENGINE=true`).
 - System tests should validate the full flow: stow → build → yolo → mount/network checks.
+- `./scripts/test-system.sh` auto-selects an engine when `AIRLOCK_ENGINE` is unset (prefers `docker`, then `podman`, then `nerdctl`).
+- `./scripts/test-unit.sh` uses a repo-local venv (`./.venv/`) and requires Python 3.11+ (for `tomllib`); set `AIRLOCK_PYTHON_BIN=python3.11`.
+- Treat warnings as actionable:
+  - Podman-on-WSL may emit systemd/user-bus/cgroup warnings; use the system smoke test to decide if they’re harmless.
+  - If Podman builds fail with `sd-bus`/`crun` errors, prefer `AIRLOCK_BUILD_ISOLATION=chroot`.
+
+## Quality Principles
+
+- Don’t hide signals: warnings/notices require an explicit decision (**fix**, **pin**, **document**)—not suppression.
+- Prefer “modern by default, controllable by knobs”: keep defaults current (e.g., latest npm) and make pinning explicit (`AIRLOCK_NPM_VERSION`, `AIRLOCK_PULL`, etc.).
+- Use local isolation to raise quality without host churn: if the distro lags (e.g., Python 3.10), use repo-local tooling (venv) rather than weakening checks.
+- Make tradeoffs explicit: when choosing compatibility defaults (e.g., Podman `--isolation=chroot`), document the why and keep an escape hatch.
 
 ## Commit & Pull Request Guidelines
 
@@ -37,3 +54,5 @@
 
 - Never commit secrets (tokens, `.codex` contents, credential helpers).
 - Prefer least-privilege defaults: avoid mounting broad host paths and avoid `--network host` unless explicitly required.
+- For bind mounts, ensure host mount sources exist (`yolo` pre-creates cache subdirs like `~/.airlock/cache/npm`).
+- Don’t silence tooling update notices; prefer pinning/controlling versions via explicit knobs (e.g., `AIRLOCK_NPM_VERSION`).

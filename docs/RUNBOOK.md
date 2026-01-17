@@ -19,6 +19,13 @@ Podman note (WSL): if you see warnings about missing `/run/user/<uid>/bus`, inst
 and enable lingering (`sudo loginctl enable-linger $(id -u)`). Airlock also defaults Podman builds to
 `--isolation=chroot` to avoid common WSL/systemd runtime issues.
 
+If `podman run` feels “stuck” before the container prints anything, enable coarse timing to confirm where
+the delay is:
+
+```bash
+AIRLOCK_TIMING=1 AIRLOCK_ENGINE=podman yolo -- bash -lc 'true'
+```
+
 ## 2) Harden WSL and Mount Context
 
 Follow `docs/WSL_HARDENING.md` to:
