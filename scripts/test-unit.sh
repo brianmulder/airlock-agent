@@ -61,6 +61,13 @@ printf '%s\n' "$out" | grep -q -- ' bash ' || fail "expected yolo to append comm
 if printf '%s\n' "$out" | grep -q -- '--network host'; then
   fail "expected yolo to NOT use host networking by default"
 fi
+printf '%s\n' "$out" | grep -q -- "-v $HOME/.codex:/home/airlock/.codex:rw" || fail "expected yolo to mount host ~/.codex by default"
+if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro'; then
+  fail "expected yolo to NOT mount policy config.toml by default"
+fi
+if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro'; then
+  fail "expected yolo to NOT mount policy AGENTS.md by default"
+fi
 ok "yolo dry-run defaults: ok"
 
 ## yolo: host networking opt-in
@@ -111,6 +118,62 @@ if printf '%s\n' "$out" | grep -q -- '--rm'; then
   fail "expected yolo to omit --rm when AIRLOCK_RM=0"
 fi
 ok "yolo keep container opt-in: ok"
+
+## yolo: Airlock-managed Codex state opt-in (policy overrides mounted ro)
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_CODEX_HOME_MODE=airlock \
+  AIRLOCK_CONTEXT_DIR="$context_dir" \
+  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- "-v $HOME/.airlock/codex-state:/home/airlock/.codex:rw" || fail "expected yolo to mount ~/.airlock/codex-state when AIRLOCK_CODEX_HOME_MODE=airlock"
+printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro' || fail "expected yolo to mount policy config.toml ro when AIRLOCK_CODEX_HOME_MODE=airlock"
+printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro' || fail "expected yolo to mount policy AGENTS.md ro when AIRLOCK_CODEX_HOME_MODE=airlock"
+ok "yolo airlock codex home opt-in: ok"
+
+## yolo: context default is created under ~/tmp/airlock_context
+rm -rf "$HOME/tmp/airlock_context"
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+[[ -d "$HOME/tmp/airlock_context" ]] || fail "expected yolo to create default context dir under ~/tmp/airlock_context"
+printf '%s\n' "$out" | grep -q -- "-v $HOME/tmp/airlock_context:/context:ro" || fail "expected yolo to mount default context dir ro"
+ok "yolo context default: ok"
+
+## yolo: if run from a git subdir, mount repo root so `.git/` is available
+if command -v git >/dev/null 2>&1; then
+  workrepo="$tmp/workrepo"
+  mkdir -p "$workrepo"
+  git -C "$workrepo" init -q
+  git -C "$workrepo" config user.email "airlock@example.invalid"
+  git -C "$workrepo" config user.name "Airlock Test"
+  printf '%s\n' "hello" >"$workrepo/README.md"
+  git -C "$workrepo" add README.md
+  git -C "$workrepo" commit -q -m "init"
+
+  mkdir -p "$workrepo/sub/dir"
+  pushd "$workrepo/sub/dir" >/dev/null
+  out="$(
+    AIRLOCK_ENGINE=true \
+    AIRLOCK_DRY_RUN=1 \
+    AIRLOCK_CONTEXT_DIR="$context_dir" \
+    DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
+    "$REPO_ROOT/stow/airlock/bin/yolo" -- bash -lc 'echo ok'
+  )"
+  popd >/dev/null
+
+  printf '%s\n' "$out" | grep -q -- "-v $workrepo:/work:rw" || fail "expected yolo to mount git repo root at /work"
+  printf '%s\n' "$out" | grep -q -- "-v $workrepo:/host$workrepo:rw" || fail "expected yolo to mount git repo root at canonical /host path"
+  printf '%s\n' "$out" | grep -q -- "-w /host$workrepo/sub/dir" || fail "expected yolo to set canonical workdir to subdir within mounted repo"
+  ok "yolo git-root mount: ok"
+else
+  echo "WARN: git not found; skipping git-root mount unit test."
+fi
 
 ## airlock-build dry-run (engine configurable)
 printf '%s\n' 'FROM debian:bookworm-slim' >"$HOME/.airlock/image/agent.Dockerfile"

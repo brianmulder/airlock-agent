@@ -9,7 +9,7 @@ cd "$REPO_ROOT"
 
 pick_engine() {
   local engine
-  for engine in docker podman nerdctl; do
+  for engine in podman docker nerdctl; do
     if command -v "$engine" >/dev/null 2>&1; then
       echo "$engine"
       return 0
@@ -59,6 +59,16 @@ mkdir -p "$home_dir" "$context_dir" "$work_dir"
 
 printf '%s\n' "hello from context" >"$context_dir/hello.txt"
 printf '%s\n' "hello from work" >"$work_dir/README.txt"
+
+if command -v git >/dev/null 2>&1; then
+  git -C "$work_dir" init -q
+  git -C "$work_dir" config user.email "airlock@example.invalid"
+  git -C "$work_dir" config user.name "Airlock Smoke"
+  git -C "$work_dir" add README.txt
+  git -C "$work_dir" commit -q -m "init"
+else
+  echo "WARN: git not found; skipping git smoke assertion."
+fi
 
 mkdir -p "$home_dir/.airlock" "$home_dir/bin"
 stow -d "$REPO_ROOT/stow" -t "$home_dir" airlock
@@ -116,8 +126,24 @@ grep -q " /drafts " /proc/mounts
 # Basic network config (bridge by default; don't assert internet access)
 ip route | grep -q "^default "
 
-# UID mapping sanity (host UID injected via AIRLOCK_UID)
-test "$(id -u)" = "${AIRLOCK_UID}"
+# UID mapping sanity:
+# - In Docker runs we expect id -u == AIRLOCK_UID.
+# - In some rootless userns setups (Podman keep-id), the process can run as uid 0 but map to a nonzero host uid.
+uid="$(id -u)"
+if test "$uid" = "${AIRLOCK_UID}"; then
+  true
+elif test "$uid" = "0" && test -r /proc/self/uid_map; then
+  outside_uid="$(awk 'NR==1 {print $2}' /proc/self/uid_map || true)"
+  test -n "$outside_uid" && test "$outside_uid" != "0"
+else
+  echo "ERROR: unexpected uid mapping: uid=$uid (expected ${AIRLOCK_UID} or rootless-userns root)" >&2
+  exit 1
+fi
+
+# Git should work even if the container user differs from the repo owner (safe.directory set inside container)
+if command -v git >/dev/null 2>&1 && test -e /work/.git; then
+  git -C /work status --porcelain >/dev/null
+fi
 EOS
 )"
 

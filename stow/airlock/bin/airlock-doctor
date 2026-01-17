@@ -4,9 +4,11 @@ set -euo pipefail
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "OK: $*"; }
 
-AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
-AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/dropbox/fred}"
+AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/tmp/airlock_context}"
+CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
+AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
 
 req() { [[ -e "$1" ]] || fail "missing: $1"; }
 
@@ -19,7 +21,13 @@ req "$HOME/bin/airlock-doctor"
 if [[ -d "$AIRLOCK_CONTEXT_DIR" ]]; then
   ok "context dir exists: $AIRLOCK_CONTEXT_DIR"
 else
-  echo "WARN: context dir not found at $AIRLOCK_CONTEXT_DIR (did you mount Dropbox in WSL yet?)"
+  if [[ "$AIRLOCK_CONTEXT_DIR" == "$HOME/tmp/airlock_context" ]]; then
+    mkdir -p "$AIRLOCK_CONTEXT_DIR"
+    ok "context dir created: $AIRLOCK_CONTEXT_DIR"
+  else
+    echo "WARN: context dir not found at $AIRLOCK_CONTEXT_DIR"
+    echo "      If you intended a mounted Dropbox context, check your WSL mount setup."
+  fi
 fi
 
 command -v "$AIRLOCK_ENGINE" >/dev/null || fail "container engine not found: $AIRLOCK_ENGINE"
@@ -34,6 +42,25 @@ if "$AIRLOCK_ENGINE" image inspect "$IMAGE" >/dev/null 2>&1; then
   ok "agent image present: $IMAGE"
 else
   echo "WARN: agent image missing: $IMAGE (run: airlock-build)"
+fi
+
+if [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]]; then
+  if [[ -f "$HOME/.codex/auth.json" ]]; then
+    ok "codex auth present (host): $HOME/.codex/auth.json"
+  else
+    echo "WARN: codex auth not found at $HOME/.codex/auth.json (codex will prompt on first run)"
+  fi
+else
+  if [[ -f "$CODEX_STATE_DIR/auth.json" ]]; then
+    ok "codex auth present: $CODEX_STATE_DIR/auth.json"
+  elif [[ -f "$HOME/.codex/auth.json" ]]; then
+    echo "WARN: codex auth missing in Airlock state: $CODEX_STATE_DIR/auth.json"
+    echo "      To reuse your host login, copy it into Airlock state:"
+    echo "        mkdir -p \"$CODEX_STATE_DIR\" && cp \"$HOME/.codex/auth.json\" \"$CODEX_STATE_DIR/auth.json\" && chmod 600 \"$CODEX_STATE_DIR/auth.json\""
+  else
+    echo "WARN: codex auth not found. First run will prompt for login and persist it under:"
+    echo "      $CODEX_STATE_DIR/auth.json"
+  fi
 fi
 
 if [[ -d /mnt/c ]]; then

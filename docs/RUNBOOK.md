@@ -5,7 +5,7 @@ This runbook is a step-by-step tutorial for installing, using, and dogfooding Ai
 ## 1) Prerequisites
 
 - Windows 11 with WSL2.
-- A container engine (default: Docker Desktop) with WSL integration enabled.
+- A container engine (default: Podman) with WSL integration enabled.
 - Dropbox installed on Windows with a dedicated context subfolder (example: `Dropbox\\fred`).
 - A WSL distro with `sudo` access.
 
@@ -32,6 +32,9 @@ Follow `docs/WSL_HARDENING.md` to:
 
 - Disable automatic Windows drive mounts.
 - Mount only your context subfolder into WSL (not all of Dropbox).
+
+If you’re not ready to mount Dropbox yet, `yolo` still runs: it will create an empty context directory at
+`~/tmp/airlock_context` and mount it read-only as `/context`.
 
 ## 3) Install Airlock via Stow
 
@@ -98,6 +101,16 @@ cd ~/code/your-project
 yolo
 ```
 
+Note: `/work` is always available as the short alias, but the default container working directory is a canonical
+`/host<WSL-path>` so Codex and git tooling don’t conflate sessions across different repos.
+
+If you mounted a Dropbox context folder into WSL, point `yolo` at it:
+
+```bash
+export AIRLOCK_CONTEXT_DIR=~/dropbox/fred
+yolo
+```
+
 Example (optional engine selection):
 
 ```bash
@@ -110,6 +123,22 @@ Required:
 
 ```bash
 codex
+```
+
+Auth persistence note:
+- By default, `yolo` mounts your host `~/.codex/` into the container (rw), so your login/config “just works”.
+- If you prefer Airlock-managed state under `~/.airlock/codex-state/` (with policy overrides), opt in:
+
+```bash
+AIRLOCK_CODEX_HOME_MODE=airlock yolo
+```
+
+- To reuse an existing host login with Airlock-managed state:
+
+```bash
+mkdir -p ~/.airlock/codex-state
+cp ~/.codex/auth.json ~/.airlock/codex-state/auth.json
+chmod 600 ~/.airlock/codex-state/auth.json
 ```
 
 ## 7) Smoke Test (No Agent)

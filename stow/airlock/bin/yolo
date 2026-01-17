@@ -15,11 +15,13 @@ Examples:
   yolo -- bash -lc 'id; mount | head'
 
 Key env vars:
-  AIRLOCK_ENGINE=docker|podman|nerdctl   Container engine command (default: docker)
+  AIRLOCK_ENGINE=podman|docker|nerdctl   Container engine command (default: podman)
   AIRLOCK_IMAGE=airlock-agent:local     Image tag to run
-  AIRLOCK_CONTEXT_DIR=~/dropbox/fred    Host context directory (must exist)
+  AIRLOCK_CONTEXT_DIR=~/tmp/airlock_context  Host context directory (created if missing)
   AIRLOCK_NETWORK=host                  Opt-in host networking (default: bridge)
   AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
+  AIRLOCK_CODEX_HOME_MODE=host|airlock  Use host ~/.codex (default) or persist under ~/.airlock with policy overrides
+  AIRLOCK_WORKDIR_MODE=canonical|work   Use /host<path> as CWD (default) or stay under /work
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
   AIRLOCK_TIMING=1                      Print coarse timing around engine run (also enables entrypoint timing)
@@ -37,11 +39,13 @@ if [[ "${1:-}" == "--" ]]; then
   shift
 fi
 
-AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
+AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
+AIRLOCK_WORKDIR_MODE="${AIRLOCK_WORKDIR_MODE:-canonical}"
 
-# Context: Dropbox-mounted in WSL (RO in container)
-AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/dropbox/fred}"
+# Context: default local (RO in container). Override to a mounted Dropbox folder if desired.
+AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/tmp/airlock_context}"
 
 # Hot-zone runtime state (WSL ext4, RW)
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
@@ -55,8 +59,35 @@ CODEX_CONFIG="${CODEX_CONFIG:-$POLICY_DIR/codex.config.toml}"
 AGENTS_MD="${AGENTS_MD:-$POLICY_DIR/AGENTS.md}"
 AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$POLICY_DIR/zshrc}"
 
-# Workspace (must be a project repo in WSL ext4)
+# Workspace (bind-mounted to /work). If inside a git repo, mount the repo root so `.git/` is available.
 WORK_DIR="$(pwd)"
+WORK_MOUNT_SRC="$WORK_DIR"
+WORK_CONTAINER_WD="/work"
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$git_root" && -d "$git_root" ]]; then
+    WORK_MOUNT_SRC="$git_root"
+    if [[ "$WORK_DIR" != "$git_root" ]]; then
+      rel="${WORK_DIR#"$git_root"/}"
+      WORK_CONTAINER_WD="/work/$rel"
+    fi
+  fi
+fi
+
+# Canonical workdir path (helps tools like Codex disambiguate sessions across repos).
+CANON_MOUNT_TARGET="/host$WORK_MOUNT_SRC"
+CANON_CONTAINER_WD="/host$WORK_DIR"
+case "$AIRLOCK_WORKDIR_MODE" in
+  canonical) ;;
+  work)
+    CANON_MOUNT_TARGET=""
+    CANON_CONTAINER_WD="$WORK_CONTAINER_WD"
+    ;;
+  *)
+    echo "ERROR: invalid AIRLOCK_WORKDIR_MODE: $AIRLOCK_WORKDIR_MODE (expected: canonical|work)" >&2
+    exit 1
+    ;;
+esac
 
 # Identity
 AIRLOCK_UID="$(id -u)"
@@ -71,13 +102,39 @@ command -v "$AIRLOCK_ENGINE" >/dev/null || {
 req_dir() { [[ -d "$1" ]] || { echo "ERROR: missing directory: $1" >&2; exit 1; }; }
 req_file() { [[ -f "$1" ]] || { echo "ERROR: missing file: $1" >&2; exit 1; }; }
 
+mkdir -p "$AIRLOCK_CONTEXT_DIR"
 req_dir "$AIRLOCK_CONTEXT_DIR"
-req_file "$CODEX_CONFIG"
-req_file "$AGENTS_MD"
 req_file "$AIRLOCK_ZSHRC"
 
+CODEX_MOUNT_SRC=""
+CODEX_MOUNTS=()
+CODEX_HOME_LABEL=""
+
+case "$AIRLOCK_CODEX_HOME_MODE" in
+  airlock)
+    req_file "$CODEX_CONFIG"
+    req_file "$AGENTS_MD"
+    CODEX_MOUNT_SRC="$CODEX_STATE_DIR"
+    CODEX_MOUNTS+=(
+      -v "$CODEX_CONFIG":/home/airlock/.codex/config.toml:ro
+      -v "$AGENTS_MD":/home/airlock/.codex/AGENTS.md:ro
+    )
+    CODEX_HOME_LABEL="$CODEX_STATE_DIR (policy overrides: ro)"
+    ;;
+  host)
+    HOST_CODEX_DIR="${AIRLOCK_HOST_CODEX_DIR:-$HOME/.codex}"
+    mkdir -p "$HOST_CODEX_DIR"
+    CODEX_MOUNT_SRC="$HOST_CODEX_DIR"
+    CODEX_HOME_LABEL="$HOST_CODEX_DIR (rw)"
+    ;;
+  *)
+    echo "ERROR: invalid AIRLOCK_CODEX_HOME_MODE: $AIRLOCK_CODEX_HOME_MODE (expected: airlock|host)" >&2
+    exit 1
+    ;;
+esac
+
 # Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
-mkdir -p "$CODEX_STATE_DIR" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm" "$DRAFTS_DIR"
+mkdir -p "$CODEX_MOUNT_SRC" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm" "$DRAFTS_DIR"
 
 # Guardrail: drafts must not live under context (prevents RO-bypass footguns)
 case "$DRAFTS_DIR" in
@@ -120,10 +177,15 @@ fi
 echo "--- Airlock YOLO ---"
 echo "Engine:     $AIRLOCK_ENGINE"
 echo "Image:      $AIRLOCK_IMAGE"
-echo "Workspace:  $WORK_DIR -> /work (rw)"
+echo "Workspace:  $WORK_DIR (mounted: $WORK_MOUNT_SRC) -> /work (rw)"
+if [[ -n "$CANON_MOUNT_TARGET" ]]; then
+  echo "Workdir:    $CANON_CONTAINER_WD (canonical; also available at /work)"
+else
+  echo "Workdir:    $WORK_CONTAINER_WD"
+fi
 echo "Context:    $AIRLOCK_CONTEXT_DIR -> /context (ro)"
 echo "Drafts:     $DRAFTS_DIR -> /drafts (rw)"
-echo "CODEX_HOME: /home/airlock/.codex (persisted)"
+echo "CODEX_HOME: /home/airlock/.codex <= $CODEX_HOME_LABEL"
 echo "Network:    ${AIRLOCK_NETWORK:-bridge}"
 echo "Name:       $AIRLOCK_CONTAINER_NAME"
 echo "---------------------"
@@ -140,19 +202,26 @@ cmd=(
   -e "AIRLOCK_TIMING=${AIRLOCK_TIMING:-0}"
   -e "HOME=/home/airlock"
   -e "CODEX_HOME=/home/airlock/.codex"
-  -v "$WORK_DIR":/work:rw
-  -w /work
+  -v "$WORK_MOUNT_SRC":/work:rw
+  -w "$CANON_CONTAINER_WD"
   -v "$AIRLOCK_CONTEXT_DIR":/context:ro
   -v "$DRAFTS_DIR":/drafts:rw
-  -v "$CODEX_STATE_DIR":/home/airlock/.codex:rw
-  -v "$CODEX_CONFIG":/home/airlock/.codex/config.toml:ro
-  -v "$AGENTS_MD":/home/airlock/.codex/AGENTS.md:ro
+  -v "$CODEX_MOUNT_SRC":/home/airlock/.codex:rw
+  "${CODEX_MOUNTS[@]}"
   -v "$CACHE_DIR":/home/airlock/.cache:rw
   -v "$CACHE_DIR/npm":/home/airlock/.npm:rw
   -v "$CACHE_DIR/pnpm":/home/airlock/.local/share/pnpm:rw
   -v "$AIRLOCK_ZSHRC":/home/airlock/.zshrc:ro
-  "$AIRLOCK_IMAGE"
 )
+
+if [[ -n "$CANON_MOUNT_TARGET" ]]; then
+  cmd+=(-v "$WORK_MOUNT_SRC":"$CANON_MOUNT_TARGET":rw)
+  cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=/work:$CANON_MOUNT_TARGET")
+else
+  cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=/work")
+fi
+
+cmd+=("$AIRLOCK_IMAGE")
 
 if (( $# > 0 )); then
   cmd+=("$@")

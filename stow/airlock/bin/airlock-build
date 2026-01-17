@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-docker}"
+AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
 
 # Two-way door: swap base image without changing code
@@ -26,7 +26,7 @@ fi
 
 command -v "$AIRLOCK_ENGINE" >/dev/null || {
   echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
-  echo "Set AIRLOCK_ENGINE=docker|podman|nerdctl (or adjust PATH)."
+  echo "Set AIRLOCK_ENGINE=podman|docker|nerdctl (or adjust PATH)."
   exit 1
 }
 

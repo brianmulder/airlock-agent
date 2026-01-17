@@ -6,6 +6,42 @@ if [[ "${AIRLOCK_TIMING:-0}" == "1" ]]; then
   echo "TIMING: entrypoint start: ${now:-unknown} uid=$(id -u) gid=$(id -g)" >&2
 fi
 
+ensure_writable_home() {
+  # Some engines/userns modes run as a uid that has no passwd entry in the image, and/or HOME points to a
+  # directory owned by root. Ensure git/codex can write dotfiles without touching the host.
+  if [[ -n "${HOME:-}" && -d "${HOME:-}" && -w "${HOME:-}" ]]; then
+    return 0
+  fi
+  HOME="/tmp/airlock-home-$(id -u)"
+  mkdir -p "$HOME" >/dev/null 2>&1 || true
+  export HOME
+}
+
+ensure_git_safe_workdir() {
+  # Git 2.35+ refuses to operate in repos owned by another UID unless marked safe.
+  # In containers (especially rootless userns setups), /work can appear "dubious" even when it's your repo.
+  # Make /work safe inside the container without touching the host.
+  command -v git >/dev/null 2>&1 || return 0
+
+  add_safe_dir() {
+    local dir="$1"
+    [[ -n "$dir" && -d "$dir" ]] || return 0
+    [[ -e "$dir/.git" ]] || return 0
+
+    # Prefer system config when root; otherwise use the user's global config.
+    if [[ "$(id -u)" -eq 0 ]]; then
+      git config --system --add safe.directory "$dir" >/dev/null 2>&1 || true
+    else
+      git config --global --add safe.directory "$dir" >/dev/null 2>&1 || true
+    fi
+  }
+
+  IFS=':' read -r -a dirs <<<"${AIRLOCK_GIT_SAFE_DIRS:-/work}"
+  for dir in "${dirs[@]}"; do
+    add_safe_dir "$dir"
+  done
+}
+
 TARGET_UID="${AIRLOCK_UID:-1000}"
 TARGET_GID="${AIRLOCK_GID:-1000}"
 FALLBACK_USER="${AIRLOCK_USER:-airlock}"
@@ -35,6 +71,8 @@ if [[ "$current_uid" -ne 0 ]]; then
     home_from_passwd="$(getent passwd "$current_uid" | cut -d: -f6 || true)"
     export HOME="${home_from_passwd:-/tmp}"
   fi
+  ensure_writable_home
+  ensure_git_safe_workdir
 
   exec "$@"
 fi
@@ -44,6 +82,7 @@ fi
 if [[ "$is_rootless_userns" == "1" && "$TARGET_UID" != "0" ]]; then
   echo "WARN: running as root in a rootless user namespace; skipping UID switch for compatibility." >&2
   mkdir -p "${HOME:-/home/airlock}"
+  ensure_git_safe_workdir
   exec "$@"
 fi
 
@@ -69,4 +108,5 @@ export HOME="${HOME:-$RUN_AS_HOME}"
 mkdir -p "$HOME"
 chown -R "$TARGET_UID:$TARGET_GID" "$HOME" || true
 
+ensure_git_safe_workdir
 exec gosu "$RUN_AS_USER" "$@"

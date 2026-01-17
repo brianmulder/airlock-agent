@@ -13,8 +13,10 @@
 - Lint only: `./scripts/test-lint.sh`
 - Unit tests only (no container engine required): `./scripts/test-unit.sh`
 - System smoke test (requires container engine + stow): `./scripts/test-system.sh`
-- Engine selection: prefix commands with `AIRLOCK_ENGINE=docker|podman|nerdctl` (default: `docker`)
+- Engine selection: prefix commands with `AIRLOCK_ENGINE=podman|docker|nerdctl` (default: `podman`)
 - Timing/debug: set `AIRLOCK_TIMING=1` to timestamp `yolo` + container entrypoint startup.
+- Defaults: `yolo` uses `AIRLOCK_CONTEXT_DIR=~/tmp/airlock_context` (created if missing) and mounts host `~/.codex/` (rw).
+- Workdir: by default, `yolo` sets the container working directory to a canonical `/host<WSL-path>` (while still mounting `/work`) so tools don’t collide state across repos.
 - Image build knobs:
   - `AIRLOCK_PULL=1|0` (default `1`)
   - `AIRLOCK_BUILD_ISOLATION=chroot|oci|...` (Podman defaults to `chroot` on WSL)
@@ -32,8 +34,9 @@
 - Prefer “sandboxed” validation: tests should use temporary directories and containers rather than touching real `$HOME`.
 - Keep unit tests engine-free where possible (use `AIRLOCK_DRY_RUN=1` and stub engines like `AIRLOCK_ENGINE=true`).
 - System tests should validate the full flow: stow → build → yolo → mount/network checks.
-- `./scripts/test-system.sh` auto-selects an engine when `AIRLOCK_ENGINE` is unset (prefers `docker`, then `podman`, then `nerdctl`).
+- `./scripts/test-system.sh` auto-selects an engine when `AIRLOCK_ENGINE` is unset (prefers `podman`, then `docker`, then `nerdctl`).
 - `./scripts/test-unit.sh` uses a repo-local venv (`./.venv/`) and requires Python 3.11+ (for `tomllib`); set `AIRLOCK_PYTHON_BIN=python3.11`.
+- For stricter policy isolation, opt in to Airlock-managed Codex state: `AIRLOCK_CODEX_HOME_MODE=airlock yolo`.
 - Treat warnings as actionable:
   - Podman-on-WSL may emit systemd/user-bus/cgroup warnings; use the system smoke test to decide if they’re harmless.
   - If Podman builds fail with `sd-bus`/`crun` errors, prefer `AIRLOCK_BUILD_ISOLATION=chroot`.
