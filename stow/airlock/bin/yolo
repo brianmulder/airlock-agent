@@ -19,6 +19,7 @@ Key env vars:
   AIRLOCK_IMAGE=airlock-agent:local     Image tag to run
   AIRLOCK_CONTEXT_DIR=~/dropbox/fred    Host context directory (must exist)
   AIRLOCK_NETWORK=host                  Opt-in host networking (default: bridge)
+  AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
   AIRLOCK_DRY_RUN=1                     Print the engine command and exit
@@ -75,7 +76,7 @@ req_file "$AGENTS_MD"
 req_file "$AIRLOCK_ZSHRC"
 
 # Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
-mkdir -p "$CODEX_STATE_DIR" "$CACHE_DIR" "$DRAFTS_DIR"
+mkdir -p "$CODEX_STATE_DIR" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm" "$DRAFTS_DIR"
 
 # Guardrail: drafts must not live under context (prevents RO-bypass footguns)
 case "$DRAFTS_DIR" in
@@ -107,6 +108,14 @@ if [[ "${AIRLOCK_NETWORK:-}" == "host" ]]; then
   NETWORK_ARGS+=(--network host)
 fi
 
+# Engine-specific user namespace settings (for rootless engines like podman).
+USERNS_ARGS=()
+if [[ -n "${AIRLOCK_USERNS:-}" ]]; then
+  USERNS_ARGS+=(--userns="$AIRLOCK_USERNS")
+elif [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+  USERNS_ARGS+=(--userns=keep-id)
+fi
+
 echo "--- Airlock YOLO ---"
 echo "Engine:     $AIRLOCK_ENGINE"
 echo "Image:      $AIRLOCK_IMAGE"
@@ -123,6 +132,7 @@ cmd=(
   "${TTY_ARGS[@]}"
   "${RM_ARGS[@]}"
   "${NETWORK_ARGS[@]}"
+  "${USERNS_ARGS[@]}"
   --name "$AIRLOCK_CONTAINER_NAME"
   -e "AIRLOCK_UID=$AIRLOCK_UID"
   -e "AIRLOCK_GID=$AIRLOCK_GID"

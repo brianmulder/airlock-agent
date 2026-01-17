@@ -10,6 +10,10 @@ AIRLOCK_BASE_IMAGE="${AIRLOCK_BASE_IMAGE:-mcr.microsoft.com/devcontainers/javasc
 # Two-way door: pin or float Codex CLI
 AIRLOCK_CODEX_VERSION="${AIRLOCK_CODEX_VERSION:-latest}"
 
+AIRLOCK_BUILD_ISOLATION="${AIRLOCK_BUILD_ISOLATION:-}"
+AIRLOCK_BUILD_USERNS="${AIRLOCK_BUILD_USERNS:-}"
+AIRLOCK_PULL="${AIRLOCK_PULL:-1}"
+
 BUILD_CONTEXT="$HOME/.airlock/image"
 DOCKERFILE="$BUILD_CONTEXT/agent.Dockerfile"
 
@@ -25,20 +29,46 @@ command -v "$AIRLOCK_ENGINE" >/dev/null || {
   exit 1
 }
 
+ENGINE_BUILD_ARGS=()
+ENGINE_PULL_ARGS=()
+if [[ "$AIRLOCK_PULL" == "0" ]]; then
+  if [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+    ENGINE_PULL_ARGS+=(--pull-never)
+  fi
+else
+  ENGINE_PULL_ARGS+=(--pull)
+fi
+if [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+  # Podman-on-WSL can fail with OCI isolation due to systemd/dbus integration in the runtime.
+  # Default to chroot isolation unless explicitly overridden.
+  if [[ -z "$AIRLOCK_BUILD_ISOLATION" ]]; then
+    AIRLOCK_BUILD_ISOLATION="chroot"
+  fi
+  ENGINE_BUILD_ARGS+=(--isolation "$AIRLOCK_BUILD_ISOLATION")
+  if [[ -n "$AIRLOCK_BUILD_USERNS" ]]; then
+    ENGINE_BUILD_ARGS+=(--userns "$AIRLOCK_BUILD_USERNS")
+  fi
+fi
+
 echo "--- Building Airlock agent image ---"
 echo "Engine:     $AIRLOCK_ENGINE"
 echo "Image:      $AIRLOCK_IMAGE"
 echo "Base image: $AIRLOCK_BASE_IMAGE"
 echo "Codex:      @openai/codex@$AIRLOCK_CODEX_VERSION"
+echo "Pull:       $AIRLOCK_PULL"
+if [[ "${#ENGINE_BUILD_ARGS[@]}" -gt 0 ]]; then
+  echo "Engine args:${ENGINE_BUILD_ARGS[*]}"
+fi
 echo "Context:    $BUILD_CONTEXT"
 echo "---------------------------------------"
 
 cmd=(
   "$AIRLOCK_ENGINE" build
-  --pull
+  "${ENGINE_PULL_ARGS[@]}"
   -t "$AIRLOCK_IMAGE"
   --build-arg "BASE_IMAGE=$AIRLOCK_BASE_IMAGE"
   --build-arg "CODEX_VERSION=$AIRLOCK_CODEX_VERSION"
+  "${ENGINE_BUILD_ARGS[@]}"
   -f "$DOCKERFILE"
   "$BUILD_CONTEXT"
 )

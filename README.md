@@ -11,6 +11,7 @@ Docker container), with a strict filesystem boundary and a review-first outbox.
 3. Install Airlock via GNU Stow:
 
 ```bash
+mkdir -p ~/.airlock ~/bin
 sudo apt-get update && sudo apt-get install -y stow
 stow -d ~/code/github.com/brianmulder/airlock/stow -t ~ airlock
 hash -r

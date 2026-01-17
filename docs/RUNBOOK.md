@@ -15,6 +15,10 @@ Supported engines (set `AIRLOCK_ENGINE` to select):
 - `nerdctl` (commonly used with Rancher Desktop / containerd)
 - `podman` (Podman / Podman Desktop)
 
+Podman note (WSL): if you see warnings about missing `/run/user/<uid>/bus`, install `dbus-user-session`
+and enable lingering (`sudo loginctl enable-linger $(id -u)`). Airlock also defaults Podman builds to
+`--isolation=chroot` to avoid common WSL/systemd runtime issues.
+
 ## 2) Harden WSL and Mount Context
 
 Follow `docs/WSL_HARDENING.md` to:
@@ -27,9 +31,16 @@ Follow `docs/WSL_HARDENING.md` to:
 Required:
 
 ```bash
+mkdir -p ~/.airlock ~/bin
 sudo apt-get update && sudo apt-get install -y stow
 stow -d ~/code/github.com/brianmulder/airlock/stow -t ~ airlock
 hash -r
+```
+
+Alternative (recommended):
+
+```bash
+./scripts/install.sh
 ```
 
 You should now have:
@@ -54,6 +65,7 @@ Examples (optional):
 
 ```bash
 AIRLOCK_ENGINE=podman airlock-build
+AIRLOCK_BUILD_ISOLATION=oci AIRLOCK_ENGINE=podman airlock-build
 AIRLOCK_BASE_IMAGE=mcr.microsoft.com/devcontainers/typescript-node:20-bookworm airlock-build
 AIRLOCK_CODEX_VERSION=0.84.0 airlock-build
 ```
@@ -99,6 +111,12 @@ This validates mounts and basic mechanics without running `codex`:
 
 ```bash
 yolo -- bash -lc 'set -e; touch /work/ok; touch /drafts/ok; ! touch /context/nope'
+```
+
+To run the full system smoke test script (stow → build → yolo), allow pulls if needed:
+
+```bash
+AIRLOCK_PULL=1 AIRLOCK_ENGINE=podman ./scripts/test-system.sh
 ```
 
 ## 8) Review + Promote Outputs

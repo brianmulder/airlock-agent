@@ -10,6 +10,8 @@ command -v stow >/dev/null || {
   exit 1
 }
 
+mkdir -p "$HOME/bin" "$HOME/.airlock"
+
 echo "--- Installing Airlock via stow ---"
 stow -d "$STOW_DIR" -t "$HOME" airlock
 echo "Done."

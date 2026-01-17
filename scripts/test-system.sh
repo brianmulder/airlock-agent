@@ -44,6 +44,7 @@ mkdir -p "$home_dir" "$context_dir" "$work_dir"
 printf '%s\n' "hello from context" >"$context_dir/hello.txt"
 printf '%s\n' "hello from work" >"$work_dir/README.txt"
 
+mkdir -p "$home_dir/.airlock" "$home_dir/bin"
 stow -d "$REPO_ROOT/stow" -t "$home_dir" airlock
 
 export HOME="$home_dir"
@@ -57,6 +58,18 @@ export AIRLOCK_RM=0
 export AIRLOCK_CONTAINER_NAME="airlock-smoke-${RANDOM}${RANDOM}"
 
 ok "system setup"
+
+base_image="$(awk '/^ARG BASE_IMAGE=/{sub(/^ARG BASE_IMAGE=/,""); print; exit}' "$HOME/.airlock/image/agent.Dockerfile" || true)"
+if [[ -z "$base_image" ]]; then
+  fail "unable to determine default BASE_IMAGE from agent.Dockerfile"
+fi
+
+if [[ "${AIRLOCK_PULL:-1}" == "0" ]]; then
+  if ! "$AIRLOCK_ENGINE" image inspect "$base_image" >/dev/null 2>&1; then
+    echo "SKIP: base image not present locally and AIRLOCK_PULL=0: $base_image"
+    exit 0
+  fi
+fi
 
 airlock-build
 ok "image built: $AIRLOCK_IMAGE"

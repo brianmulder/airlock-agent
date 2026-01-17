@@ -1,6 +1,8 @@
 ARG BASE_IMAGE=mcr.microsoft.com/devcontainers/javascript-node:20-bookworm
 FROM ${BASE_IMAGE}
 
+USER root
+
 ARG CODEX_VERSION=latest
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -18,10 +20,12 @@ RUN apt-get update && apt-get install -y \
 # Install Codex CLI
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 
+# Ensure the default HOME exists for bind mounts (yolo uses /home/airlock)
+RUN mkdir -p /home/airlock
+
 # Airlock entrypoint (UID/GID mapping + stable HOME)
 COPY entrypoint.sh /usr/local/bin/airlock-entrypoint
 RUN chmod +x /usr/local/bin/airlock-entrypoint
 
-USER root
 ENTRYPOINT ["/usr/local/bin/airlock-entrypoint"]
 CMD ["/bin/zsh"]

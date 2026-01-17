@@ -30,6 +30,7 @@ ephemeral containers.
   the mechanics without the agent.
 - Engine matrix: system test should run at least on `docker`; it should also be runnable on
   community-supported alternatives like `podman` and `nerdctl` when available.
+  - Podman-on-WSL: prefer `podman build --isolation=chroot` to avoid systemd/dbus runtime issues.
 
 ## Phase 0 — Prereqs and Baseline Validation
 

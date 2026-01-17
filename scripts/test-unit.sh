@@ -82,6 +82,29 @@ out="$(
 printf '%s\n' "$out" | grep -q -- '--network host' || fail "expected yolo to include --network host"
 ok "yolo host networking opt-in: ok"
 
+## yolo: podman defaults userns to keep-id
+out="$(
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_CONTEXT_DIR="$context_dir" \
+  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- '--userns=keep-id' || fail "expected yolo to default podman userns to keep-id"
+ok "yolo podman userns default: ok"
+
+## yolo: userns override
+out="$(
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_USERNS=private \
+  AIRLOCK_CONTEXT_DIR="$context_dir" \
+  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- '--userns=private' || fail "expected yolo to use AIRLOCK_USERNS override"
+ok "yolo userns override: ok"
+
 ## yolo: keep container opt-in
 out="$(
   AIRLOCK_ENGINE=true \
@@ -112,23 +135,66 @@ printf '%s\n' "$out" | grep -q -- 'BASE_IMAGE=example/base:latest' || fail "expe
 printf '%s\n' "$out" | grep -q -- 'CODEX_VERSION=0.0.0' || fail "expected CODEX_VERSION build-arg"
 ok "airlock-build dry-run: ok"
 
+## airlock-build: podman defaults isolation to chroot
+printf '%s\n' 'FROM debian:bookworm-slim' >"$HOME/.airlock/image/agent.Dockerfile"
+out="$(
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_IMAGE=airlock-agent:test \
+  AIRLOCK_BASE_IMAGE=example/base:latest \
+  AIRLOCK_CODEX_VERSION=0.0.0 \
+  stow/airlock/bin/airlock-build
+)"
+printf '%s\n' "$out" | grep -q -- '--isolation chroot' || fail "expected podman build to default to --isolation chroot"
+ok "airlock-build podman isolation default: ok"
+
+## airlock-build: podman isolation override
+out="$(
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_BUILD_ISOLATION=oci \
+  AIRLOCK_IMAGE=airlock-agent:test \
+  AIRLOCK_BASE_IMAGE=example/base:latest \
+  AIRLOCK_CODEX_VERSION=0.0.0 \
+  stow/airlock/bin/airlock-build
+)"
+printf '%s\n' "$out" | grep -q -- '--isolation oci' || fail "expected podman build to use AIRLOCK_BUILD_ISOLATION override"
+ok "airlock-build podman isolation override: ok"
+
+## airlock-build: pull toggle
+out="$(
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_PULL=0 \
+  AIRLOCK_IMAGE=airlock-agent:test \
+  AIRLOCK_BASE_IMAGE=example/base:latest \
+  AIRLOCK_CODEX_VERSION=0.0.0 \
+  stow/airlock/bin/airlock-build
+)"
+printf '%s\n' "$out" | grep -q -- '--pull-never' || fail "expected podman build to use --pull-never when AIRLOCK_PULL=0"
+ok "airlock-build pull toggle: ok"
+
 ## stow install/uninstall (idempotence + symlinks)
 if command -v stow >/dev/null 2>&1; then
   stow_home="$tmp/stow-home"
-  mkdir -p "$stow_home"
+  mkdir -p "$stow_home/.airlock" "$stow_home/bin"
 
   stow -d "$REPO_ROOT/stow" -t "$stow_home" airlock
-  [[ -L "$stow_home/bin" || -L "$stow_home/bin/yolo" ]] || fail "expected stowed bin to be symlinked"
-  [[ -e "$stow_home/bin/yolo" ]] || fail "expected yolo to exist under stowed bin"
-  [[ -L "$stow_home/.airlock" || -L "$stow_home/.airlock/policy/codex.config.toml" ]] || fail "expected stowed .airlock to be symlinked"
-  [[ -e "$stow_home/.airlock/policy/codex.config.toml" ]] || fail "expected codex config to exist under stowed .airlock"
+  [[ -d "$stow_home/.airlock" && ! -L "$stow_home/.airlock" ]] || fail "expected .airlock to be a real directory"
+  [[ -L "$stow_home/.airlock/policy" ]] || fail "expected stowed policy to be symlinked"
+  [[ -L "$stow_home/.airlock/image" ]] || fail "expected stowed image to be symlinked"
+  [[ -L "$stow_home/bin/yolo" ]] || fail "expected stowed yolo to be a symlink"
+  [[ -e "$stow_home/.airlock/policy/codex.config.toml" ]] || fail "expected codex config to exist under stowed policy"
 
   stow -d "$REPO_ROOT/stow" -t "$stow_home" airlock
   ok "stow idempotence: ok"
 
   stow -D -d "$REPO_ROOT/stow" -t "$stow_home" airlock
-  [[ ! -e "$stow_home/bin" ]] || fail "expected stowed bin removed after uninstall"
-  [[ ! -e "$stow_home/.airlock" ]] || fail "expected stowed .airlock removed after uninstall"
+  [[ -d "$stow_home/bin" ]] || fail "expected bin directory to remain after uninstall"
+  [[ -d "$stow_home/.airlock" ]] || fail "expected .airlock directory to remain after uninstall"
+  [[ ! -e "$stow_home/bin/yolo" ]] || fail "expected yolo removed after uninstall"
+  [[ ! -e "$stow_home/.airlock/policy" ]] || fail "expected policy symlink removed after uninstall"
+  [[ ! -e "$stow_home/.airlock/image" ]] || fail "expected image symlink removed after uninstall"
   ok "stow uninstall: ok"
 else
   echo "WARN: stow not found; skipping stow unit tests."
