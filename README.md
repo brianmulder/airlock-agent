@@ -1,14 +1,12 @@
 # Airlock
 
-Airlock is a compartmentalized dev workflow for AI-assisted coding on Windows + WSL + Docker.
-It separates a safe **manager environment** (WSL) from an **execution environment** (ephemeral
-Docker container), with a strict filesystem boundary and a review-first outbox.
+Airlock is a compartmentalized dev workflow for AI-assisted coding on a Linux host + containers
+(Podman/Docker/nerdctl). It runs an ephemeral container with explicit mounts and a review-first workflow.
 
 ## Quickstart
 
-1. Install prerequisites (WSL2, a container engine, Dropbox).
-2. Apply WSL hardening and mount only your context folder (see `docs/WSL_HARDENING.md`).
-3. Install Airlock via GNU Stow (adjust the repo path as needed):
+1. Install prerequisites: a container engine and GNU Stow.
+2. Install Airlock via GNU Stow (adjust the repo path as needed):
 
 ```bash
 mkdir -p ~/.airlock ~/bin
@@ -23,36 +21,23 @@ Or (recommended):
 ./scripts/install.sh
 ```
 
-4. Ensure your context directory exists. By default, `yolo` uses `~/tmp/airlock_context` (created automatically).
-   If you’re using a mounted Dropbox context, override:
-
-```bash
-export AIRLOCK_CONTEXT_DIR=~/dropbox/fred
-```
-
-5. Build the agent image:
+3. Build the agent image:
 
 ```bash
 airlock-build
 ```
 
-6. Run the doctor checks:
-
-```bash
-airlock-doctor
-```
-
-7. Launch the agent from a WSL-native repo:
+4. Launch from a project repo:
 
 ```bash
 cd ~/code/your-project
 yolo
 ```
 
-Inside the container:
+Launch Codex:
 
 ```bash
-codex
+yolo -- codex
 ```
 
 Authentication note:
@@ -60,15 +45,26 @@ Authentication note:
 - If you prefer Airlock-managed state under `~/.airlock/codex-state/` (with policy overrides), opt in:
 
 ```bash
-AIRLOCK_CODEX_HOME_MODE=airlock yolo
+AIRLOCK_CODEX_HOME_MODE=airlock yolo -- codex
 ```
 
-- To reuse an existing host login with Airlock-managed state:
+Mount additional directories explicitly:
 
 ```bash
-mkdir -p ~/.airlock/codex-state
-cp ~/.codex/auth.json ~/.airlock/codex-state/auth.json
-chmod 600 ~/.airlock/codex-state/auth.json
+# Read-only inputs
+yolo --mount-ro ~/tmp/inputs -- codex
+
+# Extra writable directory (also forwarded to `codex --add-dir ...`)
+yolo --add-dir ~/tmp/outbox -- codex
+```
+
+## Global Agent Notes
+
+Codex also reads `~/.codex/AGENTS.md` for global instructions. A reasonable baseline for `yolo` containers:
+
+```markdown
+- If `$AIRLOCK_YOLO=1`, you are inside an Airlock `yolo` container.
+- Your filesystem access is defined by explicit bind mounts; ask the user where outputs should go if unsure.
 ```
 
 Engine selection examples:
@@ -78,20 +74,57 @@ AIRLOCK_ENGINE=podman airlock-build
 AIRLOCK_ENGINE=podman yolo
 ```
 
+## Note for WSL users
+
+Airlock itself is Linux-first and does not require WSL-specific configuration. If you use it on WSL2, treat
+any Windows-mounted paths as “untrusted” by default: keep your workspace and writable mounts on the Linux
+filesystem, and mount Windows-backed inputs read-only (e.g., via `yolo --mount-ro ...`).
+
+If you want the stronger “manager hardening” setup (no automatic Windows drive mounts + optional narrow
+mount), see `docs/WSL_HARDENING.md`.
+
+## Note for Dropbox users
+
+Dropbox is optional. If you want a sync-backed inputs folder, mount it read-only:
+
+```bash
+yolo --mount-ro ~/path/to/dropbox/inputs -- codex
+```
+
 ## Repository Layout
 
 - `docs/` – runbook and security notes
 - `scripts/` – install/uninstall helpers
 - `stow/airlock/` – installable package (binaries + templates)
+- `docs/DECISIONS.md` – living “why” notes (defaults, tradeoffs, troubleshooting)
+
+## Dogfood From Dotfiles (Stow)
+
+Recommended (submodule):
+
+```bash
+cd ~/code/github.com/brianmulder/dotfiles
+mkdir -p vendor
+git submodule add https://github.com/brianmulder/airlock vendor/airlock
+stow -d vendor/airlock/stow -t ~ airlock
+```
+
+Alternative (vendor): copy `stow/airlock/` into your dotfiles repo and run `stow -t ~ airlock`.
 
 ## Key Design Rules
 
-- `/context` is read-only and mounted from your chosen context directory (often a mounted Dropbox folder).
-- `/drafts` is read-write on WSL ext4 (quarantine for agent outputs).
-- `/work` is the only editable source of truth (project repo).
+- By default, only your workspace mount is writable inside the container.
+- Additional mounts are explicit (`yolo --mount-ro ...` / `yolo --add-dir ...`).
 - Host networking is opt-in (`AIRLOCK_NETWORK=host`).
-- `yolo` mounts the git repo root to `/work` when run inside a repo (so `.git/` is available even from subdirs).
-- By default, the container working directory is a canonical `/host<WSL-path>` so tools don’t conflate different repos that would otherwise all look like `/work`.
+- `yolo` mounts the git repo root (or the current directory) at a canonical `/host<host-path>` so tools don’t conflate repos.
+
+## Containers From Inside `yolo`
+
+Airlock mounts the host engine socket when available so you can run container builds from inside the `yolo`
+shell (e.g., `docker build ...`). If the socket isn’t present, run `airlock-doctor` for the suggested setup.
+
+Note: when the host engine is Podman, `docker` talking to the Podman socket is often more reliable than
+`podman --remote` because it avoids Podman client/server version skew.
 
 ## Testing (Repo)
 

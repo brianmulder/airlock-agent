@@ -7,6 +7,39 @@ ok() { echo "OK: $*"; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+image_exists() {
+  local image="$1"
+  "$AIRLOCK_ENGINE" image inspect "$image" >/dev/null 2>&1
+}
+
+image_input_sha() {
+  local dir="$1"
+  local -a hash_cmd
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    hash_cmd=(shasum -a 256)
+  else
+    echo "unknown"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  find "$dir" -type f -print0 | LC_ALL=C sort -z | xargs -0 "${hash_cmd[@]}" >"$tmp"
+  "${hash_cmd[@]}" "$tmp" | awk '{print $1}'
+  rm -f "$tmp" || true
+}
+
+image_label() {
+  local image="$1"
+  local label="$2"
+  # Try docker/nerdctl layout first, then podman layout.
+  "$AIRLOCK_ENGINE" image inspect "$image" --format "{{ index .Config.Labels \"$label\" }}" 2>/dev/null || \
+    "$AIRLOCK_ENGINE" image inspect "$image" -f "{{ index .Labels \"$label\" }}" 2>/dev/null || \
+    true
+}
+
 pick_engine() {
   local engine
   for engine in podman docker nerdctl; do
@@ -33,12 +66,19 @@ if ! command -v "$AIRLOCK_ENGINE" >/dev/null 2>&1; then
   exit 0
 fi
 
-tmp="$(mktemp -d)"
+tmp=""
+if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$REPO_ROOT" == /host/* ]]; then
+  tmp_base="$REPO_ROOT/.airlock-test-tmp"
+  mkdir -p "$tmp_base"
+  tmp="$(mktemp -d -p "$tmp_base")"
+else
+  tmp="$(mktemp -d)"
+fi
 cleanup() {
   if [[ -n "${AIRLOCK_CONTAINER_NAME:-}" ]]; then
     "$AIRLOCK_ENGINE" rm -f "$AIRLOCK_CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
-  if [[ -n "${AIRLOCK_IMAGE:-}" ]]; then
+  if [[ "${AIRLOCK_SYSTEM_CLEAN_IMAGE:-0}" == "1" && "${did_build:-0}" == "1" && -n "${AIRLOCK_IMAGE:-}" ]]; then
     "$AIRLOCK_ENGINE" image rm "$AIRLOCK_IMAGE" >/dev/null 2>&1 || true
   fi
   rm -rf "$tmp"
@@ -53,11 +93,12 @@ if ! "$AIRLOCK_ENGINE" info >/dev/null 2>"$engine_info_err"; then
 fi
 
 home_dir="$tmp/home"
-context_dir="$tmp/context"
+ro_dir="$tmp/ro"
+rw_dir="$tmp/rw"
 work_dir="$tmp/work"
-mkdir -p "$home_dir" "$context_dir" "$work_dir"
+mkdir -p "$home_dir" "$ro_dir" "$rw_dir" "$work_dir"
 
-printf '%s\n' "hello from context" >"$context_dir/hello.txt"
+printf '%s\n' "hello from ro" >"$ro_dir/hello.txt"
 printf '%s\n' "hello from work" >"$work_dir/README.txt"
 
 if command -v git >/dev/null 2>&1; then
@@ -76,8 +117,12 @@ stow -d "$REPO_ROOT/stow" -t "$home_dir" airlock
 export HOME="$home_dir"
 export PATH="$HOME/bin:$PATH"
 
-export AIRLOCK_IMAGE="airlock-agent:smoke-${RANDOM}${RANDOM}"
-export AIRLOCK_CONTEXT_DIR="$context_dir"
+default_existing_image="airlock-agent:local"
+
+if [[ -z "${AIRLOCK_IMAGE:-}" ]]; then
+  export AIRLOCK_IMAGE="$default_existing_image"
+fi
+
 export AIRLOCK_ENGINE
 export AIRLOCK_TTY=0
 export AIRLOCK_RM=0
@@ -85,69 +130,90 @@ export AIRLOCK_CONTAINER_NAME="airlock-smoke-${RANDOM}${RANDOM}"
 
 ok "system setup"
 
-base_image="$(awk '/^ARG BASE_IMAGE=/{sub(/^ARG BASE_IMAGE=/,""); print; exit}' "$HOME/.airlock/image/agent.Dockerfile" || true)"
-if [[ -z "$base_image" ]]; then
-  fail "unable to determine default BASE_IMAGE from agent.Dockerfile"
+need_build=0
+if [[ "${AIRLOCK_SYSTEM_REBUILD:-0}" == "1" ]]; then
+  need_build=1
+elif ! image_exists "$AIRLOCK_IMAGE"; then
+  need_build=1
 fi
 
-if [[ "${AIRLOCK_PULL:-1}" == "0" ]]; then
-  if ! "$AIRLOCK_ENGINE" image inspect "$base_image" >/dev/null 2>&1; then
-    echo "SKIP: base image not present locally and AIRLOCK_PULL=0: $base_image"
-    exit 0
+did_build=0
+if [[ "$need_build" == "1" ]]; then
+  base_image="$(awk '/^ARG BASE_IMAGE=/{sub(/^ARG BASE_IMAGE=/,""); print; exit}' "$HOME/.airlock/image/agent.Dockerfile" || true)"
+  if [[ -z "$base_image" ]]; then
+    fail "unable to determine default BASE_IMAGE from agent.Dockerfile"
+  fi
+
+  if [[ "${AIRLOCK_PULL:-1}" == "0" ]]; then
+    if ! "$AIRLOCK_ENGINE" image inspect "$base_image" >/dev/null 2>&1; then
+      echo "SKIP: base image not present locally and AIRLOCK_PULL=0: $base_image"
+      exit 0
+    fi
+  fi
+
+  airlock-build
+  did_build=1
+  ok "image built: $AIRLOCK_IMAGE"
+else
+  ctx_sha="$(image_input_sha "$HOME/.airlock/image")"
+  img_sha="$(image_label "$AIRLOCK_IMAGE" "io.airlock.image_input_sha")"
+  if [[ -n "$ctx_sha" && "$ctx_sha" != "unknown" && ( -z "$img_sha" || "$img_sha" == "unknown" || "$ctx_sha" != "$img_sha" ) ]]; then
+    ok "existing image is stale; rebuilding: $AIRLOCK_IMAGE"
+    AIRLOCK_IMAGE_INPUT_SHA="$ctx_sha" airlock-build
+    did_build=1
+    ok "image built: $AIRLOCK_IMAGE"
+  else
+    ok "using existing image: $AIRLOCK_IMAGE"
   fi
 fi
 
-airlock-build
-ok "image built: $AIRLOCK_IMAGE"
-
 pushd "$work_dir" >/dev/null
 
-smoke_script="$(cat <<'EOS'
+ro_target="/host${ro_dir#/host}"
+rw_target="/host${rw_dir#/host}"
+
+smoke_script="$(cat <<EOS
 set -euo pipefail
 
-test -f /context/hello.txt
-test -f /work/README.txt
+RO_TARGET="$ro_target"
+RW_TARGET="$rw_target"
+
+test -f "\${RO_TARGET}/hello.txt"
+test -f "\$(pwd)/README.txt"
 
 # RW mounts
-touch /work/.airlock-smoke-work
-touch /drafts/.airlock-smoke-drafts
+touch "\$(pwd)/.airlock-smoke-work"
+touch "\${RW_TARGET}/.airlock-smoke-rw"
 
 # RO mount
-if touch /context/.airlock-smoke-context 2>/dev/null; then
-  echo "ERROR: /context is writable"
+if touch "\${RO_TARGET}/.airlock-smoke-ro" 2>/dev/null; then
+  echo "ERROR: ro mount is writable"
   exit 1
 fi
 
 # Mount presence
-grep -q " /context " /proc/mounts
-grep -q " /work " /proc/mounts
-grep -q " /drafts " /proc/mounts
+grep -Fq " \${RO_TARGET} " /proc/mounts
+grep -Fq " \${RW_TARGET} " /proc/mounts
 
 # Basic network config (bridge by default; don't assert internet access)
 ip route | grep -q "^default "
 
-# UID mapping sanity:
-# - In Docker runs we expect id -u == AIRLOCK_UID.
-# - In some rootless userns setups (Podman keep-id), the process can run as uid 0 but map to a nonzero host uid.
-uid="$(id -u)"
-if test "$uid" = "${AIRLOCK_UID}"; then
-  true
-elif test "$uid" = "0" && test -r /proc/self/uid_map; then
-  outside_uid="$(awk 'NR==1 {print $2}' /proc/self/uid_map || true)"
-  test -n "$outside_uid" && test "$outside_uid" != "0"
-else
-  echo "ERROR: unexpected uid mapping: uid=$uid (expected ${AIRLOCK_UID} or rootless-userns root)" >&2
-  exit 1
+# Git should work even if the container user differs from the repo owner (safe.directory set inside container)
+if command -v git >/dev/null 2>&1 && test -e "\$(pwd)/.git"; then
+  git -C "\$(pwd)" status --porcelain >/dev/null
 fi
 
-# Git should work even if the container user differs from the repo owner (safe.directory set inside container)
-if command -v git >/dev/null 2>&1 && test -e /work/.git; then
-  git -C /work status --porcelain >/dev/null
+# Container engine passthrough (optional): if the socket is mounted, the engine should be usable inside yolo.
+if command -v podman >/dev/null 2>&1 && test -S /run/podman/podman.sock; then
+  podman version >/dev/null
+  podman ps >/dev/null
 fi
 EOS
 )"
 
-yolo -- bash -lc "$smoke_script"
+# When running the system test from inside a `yolo` container, the engine is typically remote (host socket),
+# so re-mounting the engine socket into the inner container is not meaningful and can fail due to path mismatch.
+AIRLOCK_MOUNT_ENGINE_SOCKET=0 yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- bash -c "$smoke_script"
 
 popd >/dev/null
 ok "container smoke checks: ok"
@@ -159,7 +225,7 @@ if [[ "$AIRLOCK_ENGINE" == "docker" ]]; then
     *) fail "unexpected docker network mode: $mode" ;;
   esac
 else
-  echo "NOTE: network-mode inspection currently only asserted for AIRLOCK_ENGINE=docker."
+  ok "network mode: not asserted for AIRLOCK_ENGINE=$AIRLOCK_ENGINE"
 fi
 
 ok "system smoke test: complete"

@@ -1,0 +1,8 @@
+globs:
+  - "**/*.md"
+ignores:
+  - "**/.venv/**"
+
+config:
+  # Keep docs readable in diffs; don't hard-fail on long lines in prose/code.
+  MD013: false

@@ -24,6 +24,28 @@ if [[ ! -f "$DOCKERFILE" ]]; then
   exit 1
 fi
 
+image_input_sha() {
+  local dir="$1"
+  local -a hash_cmd
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    hash_cmd=(shasum -a 256)
+  else
+    echo "unknown"
+    return 0
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  # Stable: hash file contents + paths, then hash that list.
+  find "$dir" -type f -print0 | LC_ALL=C sort -z | xargs -0 "${hash_cmd[@]}" >"$tmp"
+  "${hash_cmd[@]}" "$tmp" | awk '{print $1}'
+  rm -f "$tmp" || true
+}
+
+AIRLOCK_IMAGE_INPUT_SHA="${AIRLOCK_IMAGE_INPUT_SHA:-$(image_input_sha "$BUILD_CONTEXT")}"
+
 command -v "$AIRLOCK_ENGINE" >/dev/null || {
   echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
   echo "Set AIRLOCK_ENGINE=podman|docker|nerdctl (or adjust PATH)."
@@ -40,7 +62,7 @@ else
   ENGINE_PULL_ARGS+=(--pull)
 fi
 if [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
-  # Podman-on-WSL can fail with OCI isolation due to systemd/dbus integration in the runtime.
+  # Podman can fail with OCI isolation due to runtime integration issues.
   # Default to chroot isolation unless explicitly overridden.
   if [[ -z "$AIRLOCK_BUILD_ISOLATION" ]]; then
     AIRLOCK_BUILD_ISOLATION="chroot"
@@ -57,6 +79,7 @@ echo "Image:      $AIRLOCK_IMAGE"
 echo "Base image: $AIRLOCK_BASE_IMAGE"
 echo "Codex:      @openai/codex@$AIRLOCK_CODEX_VERSION"
 echo "npm:        npm@$AIRLOCK_NPM_VERSION"
+echo "Image input:$AIRLOCK_IMAGE_INPUT_SHA"
 echo "Pull:       $AIRLOCK_PULL"
 if [[ "${#ENGINE_BUILD_ARGS[@]}" -gt 0 ]]; then
   echo "Engine args:${ENGINE_BUILD_ARGS[*]}"
@@ -71,6 +94,7 @@ cmd=(
   --build-arg "BASE_IMAGE=$AIRLOCK_BASE_IMAGE"
   --build-arg "CODEX_VERSION=$AIRLOCK_CODEX_VERSION"
   --build-arg "NPM_VERSION=$AIRLOCK_NPM_VERSION"
+  --build-arg "AIRLOCK_IMAGE_INPUT_SHA=$AIRLOCK_IMAGE_INPUT_SHA"
   "${ENGINE_BUILD_ARGS[@]}"
   -f "$DOCKERFILE"
   "$BUILD_CONTEXT"

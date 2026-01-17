@@ -6,7 +6,6 @@ ok() { echo "OK: $*"; }
 
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
-AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/tmp/airlock_context}"
 CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
 AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
 
@@ -18,23 +17,44 @@ req "$HOME/bin/yolo"
 req "$HOME/bin/airlock-build"
 req "$HOME/bin/airlock-doctor"
 
-if [[ -d "$AIRLOCK_CONTEXT_DIR" ]]; then
-  ok "context dir exists: $AIRLOCK_CONTEXT_DIR"
-else
-  if [[ "$AIRLOCK_CONTEXT_DIR" == "$HOME/tmp/airlock_context" ]]; then
-    mkdir -p "$AIRLOCK_CONTEXT_DIR"
-    ok "context dir created: $AIRLOCK_CONTEXT_DIR"
-  else
-    echo "WARN: context dir not found at $AIRLOCK_CONTEXT_DIR"
-    echo "      If you intended a mounted Dropbox context, check your WSL mount setup."
-  fi
-fi
-
 command -v "$AIRLOCK_ENGINE" >/dev/null || fail "container engine not found: $AIRLOCK_ENGINE"
 if "$AIRLOCK_ENGINE" info >/dev/null 2>&1; then
   ok "engine reachable: $AIRLOCK_ENGINE"
 else
   fail "engine not reachable (is it running and configured?): $AIRLOCK_ENGINE"
+fi
+
+if [[ "${AIRLOCK_MOUNT_ENGINE_SOCKET:-1}" != "0" ]]; then
+  if [[ "$AIRLOCK_ENGINE" == "docker" ]]; then
+    if [[ -S /var/run/docker.sock ]]; then
+      ok "docker socket present: /var/run/docker.sock"
+    else
+      echo "WARN: docker socket not found at /var/run/docker.sock"
+      echo "      Container builds from inside yolo will not work until the socket is available."
+    fi
+  elif [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+    sock=""
+    for candidate in \
+      "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
+      "/run/user/$(id -u)/podman/podman.sock" \
+      "/run/podman/podman.sock"
+    do
+      if [[ -S "$candidate" ]]; then
+        sock="$candidate"
+        break
+      fi
+    done
+
+    if [[ -n "$sock" ]]; then
+      ok "podman socket present: $sock"
+    else
+      echo "WARN: podman socket not found (podman CLI works, but builds from inside yolo need a socket)."
+      echo "      Try enabling the user socket (systemd):"
+      echo "        systemctl --user enable --now podman.socket"
+      echo "      If user systemd isn't available, run a one-shot service instead:"
+      echo "        podman system service --time=0 \"unix:///run/user/$(id -u)/podman/podman.sock\""
+    fi
+  fi
 fi
 
 IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
@@ -61,12 +81,6 @@ else
     echo "WARN: codex auth not found. First run will prompt for login and persist it under:"
     echo "      $CODEX_STATE_DIR/auth.json"
   fi
-fi
-
-if [[ -d /mnt/c ]]; then
-  echo "WARN: /mnt/c exists. If you intended no Windows drives, check /etc/wsl.conf automount settings."
-else
-  ok "/mnt/c not present (good)"
 fi
 
 ok "basic checks complete"

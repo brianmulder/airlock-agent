@@ -12,16 +12,16 @@ cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 
 home_dir="$tmp/home"
-context_dir="$tmp/context"
-mkdir -p "$home_dir" "$context_dir"
+ro_dir="$tmp/ro"
+rw_dir="$tmp/rw"
+mkdir -p "$home_dir" "$ro_dir" "$rw_dir"
 
 export HOME="$home_dir"
 
 mkdir -p "$HOME/.airlock/policy" "$HOME/.airlock/image"
 printf '%s\n' "# test" >"$HOME/.airlock/policy/codex.config.toml"
-printf '%s\n' "# test" >"$HOME/.airlock/policy/AGENTS.md"
 printf '%s\n' "# test" >"$HOME/.airlock/policy/zshrc"
-printf '%s\n' "hello" >"$context_dir/hello.txt"
+printf '%s\n' "hello" >"$ro_dir/hello.txt"
 
 ok "unit setup"
 
@@ -34,39 +34,32 @@ import pathlib
 import tomllib
 
 path = pathlib.Path("stow/airlock/.airlock/policy/codex.config.toml")
-tomllib.loads(path.read_text(encoding="utf-8"))
+config = tomllib.loads(path.read_text(encoding="utf-8"))
 PY
 ok "codex.config.toml parses (tomllib): ok"
-
-## yolo guardrail: drafts inside context must fail
-if AIRLOCK_ENGINE=true \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$context_dir/drafts" \
-  stow/airlock/bin/yolo >/dev/null 2>&1; then
-  fail "expected yolo to fail when DRAFTS_DIR is inside AIRLOCK_CONTEXT_DIR"
-fi
-ok "yolo guardrail: ok"
 
 ## yolo dry-run defaults (no host networking; rm enabled)
 out="$(
   AIRLOCK_ENGINE=true \
   AIRLOCK_DRY_RUN=1 \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
 printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected yolo dry-run to print CMD:"
 printf '%s\n' "$out" | grep -q -- '--rm' || fail "expected yolo to include --rm by default"
 printf '%s\n' "$out" | grep -q -- ' bash ' || fail "expected yolo to append command args"
+printf '%s\n' "$out" | grep -q -- 'AIRLOCK_YOLO=1' || fail "expected yolo to set AIRLOCK_YOLO=1"
+if printf '%s\n' "$out" | grep -q -- 'AIRLOCK_CONTEXT='; then
+  fail "expected yolo to NOT set AIRLOCK_CONTEXT"
+fi
+if printf '%s\n' "$out" | grep -q -- 'AIRLOCK_DRAFTS='; then
+  fail "expected yolo to NOT set AIRLOCK_DRAFTS"
+fi
 if printf '%s\n' "$out" | grep -q -- '--network host'; then
   fail "expected yolo to NOT use host networking by default"
 fi
 printf '%s\n' "$out" | grep -q -- "-v $HOME/.codex:/home/airlock/.codex:rw" || fail "expected yolo to mount host ~/.codex by default"
 if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro'; then
   fail "expected yolo to NOT mount policy config.toml by default"
-fi
-if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro'; then
-  fail "expected yolo to NOT mount policy AGENTS.md by default"
 fi
 ok "yolo dry-run defaults: ok"
 
@@ -75,31 +68,59 @@ out="$(
   AIRLOCK_ENGINE=true \
   AIRLOCK_DRY_RUN=1 \
   AIRLOCK_NETWORK=host \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
 printf '%s\n' "$out" | grep -q -- '--network host' || fail "expected yolo to include --network host"
 ok "yolo host networking opt-in: ok"
 
-## yolo: podman defaults userns to keep-id
+## yolo: podman defaults userns to keep-id (when supported by the CLI)
+fakebin_podman="$tmp/fakebin-podman"
+mkdir -p "$fakebin_podman"
+cat >"$fakebin_podman/podman" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
+  echo "  --userns=keep-id    Keep host UID/GID"
+  exit 0
+fi
+
+exit 0
+SH
+chmod +x "$fakebin_podman/podman"
+
 out="$(
+  PATH="$fakebin_podman:$PATH" \
   AIRLOCK_ENGINE=podman \
   AIRLOCK_DRY_RUN=1 \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
-printf '%s\n' "$out" | grep -q -- '--userns=keep-id' || fail "expected yolo to default podman userns to keep-id"
+printf '%s\n' "$out" | grep -q -- '--userns=keep-id' || fail "expected yolo to default podman userns to keep-id when supported"
 ok "yolo podman userns default: ok"
+
+## yolo: docker defaults to running as host uid:gid (prevents root-owned bind mount files)
+fakebin="$tmp/fakebin"
+mkdir -p "$fakebin"
+cat >"$fakebin/docker" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$fakebin/docker"
+
+out="$(
+  PATH="$fakebin:$PATH" \
+  AIRLOCK_ENGINE=docker \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- "--user $(id -u):$(id -g)" || fail "expected yolo to include --user uid:gid for docker by default"
+ok "yolo docker user default: ok"
 
 ## yolo: userns override
 out="$(
   AIRLOCK_ENGINE=podman \
   AIRLOCK_DRY_RUN=1 \
   AIRLOCK_USERNS=private \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
 printf '%s\n' "$out" | grep -q -- '--userns=private' || fail "expected yolo to use AIRLOCK_USERNS override"
@@ -110,8 +131,6 @@ out="$(
   AIRLOCK_ENGINE=true \
   AIRLOCK_DRY_RUN=1 \
   AIRLOCK_RM=0 \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
 if printf '%s\n' "$out" | grep -q -- '--rm'; then
@@ -119,31 +138,155 @@ if printf '%s\n' "$out" | grep -q -- '--rm'; then
 fi
 ok "yolo keep container opt-in: ok"
 
+## yolo: if container name is already running, attach instead of failing
+fakebin_attach="$tmp/fakebin-attach"
+mkdir -p "$fakebin_attach"
+cat >"$fakebin_attach/podman" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+subcmd="${1:-}"
+shift || true
+
+case "$subcmd" in
+  inspect)
+    if [[ "${1:-}" == "-f" ]]; then
+      # Called as: inspect -f '{{.State.Running}}' <name>
+      echo "true"
+      exit 0
+    fi
+    exit 0
+    ;;
+  exec)
+    echo "FAKE_ENGINE: exec $*" >&2
+    exit 0
+    ;;
+  run)
+    echo "FAKE_ENGINE: run called unexpectedly" >&2
+    exit 42
+    ;;
+  rm)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fakebin_attach/podman"
+
+out="$(
+  PATH="$fakebin_attach:$PATH" \
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_CONTAINER_NAME=airlock-test-attach \
+  AIRLOCK_MOUNT_ENGINE_SOCKET=0 \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok' 2>&1
+)"
+printf '%s\n' "$out" | grep -q 'INFO: container is already running; attaching:' || fail "expected yolo to attach when the container name is already running"
+printf '%s\n' "$out" | grep -q 'FAKE_ENGINE: exec ' || fail "expected yolo to exec into the running container"
+ok "yolo attach to running container: ok"
+
+## yolo: --new starts a second container instead of attaching
+fakebin_new="$tmp/fakebin-new"
+mkdir -p "$fakebin_new"
+cat >"$fakebin_new/podman" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+subcmd="${1:-}"
+shift || true
+
+case "$subcmd" in
+  inspect)
+    if [[ "${1:-}" == "-f" ]]; then
+      echo "true"
+      exit 0
+    fi
+    exit 0
+    ;;
+  run)
+    echo "FAKE_ENGINE: run $*" >&2
+    exit 0
+    ;;
+  exec)
+    echo "FAKE_ENGINE: exec called unexpectedly" >&2
+    exit 42
+    ;;
+  rm)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fakebin_new/podman"
+
+out="$(
+  PATH="$fakebin_new:$PATH" \
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_CONTAINER_NAME=airlock-test-new \
+  AIRLOCK_MOUNT_ENGINE_SOCKET=0 \
+  stow/airlock/bin/yolo --new -- bash -lc 'echo ok' 2>&1
+)"
+printf '%s\n' "$out" | grep -q 'INFO: name already in use; starting new container:' || fail "expected yolo --new to choose a new container name when the default is already running"
+printf '%s\n' "$out" | grep -q 'FAKE_ENGINE: run ' || fail "expected yolo --new to start a new container (run)"
+printf '%s\n' "$out" | grep -q -- '--name airlock-test-new-' || fail "expected yolo --new to append a unique suffix to the container name"
+ok "yolo --new starts a second container: ok"
+
 ## yolo: Airlock-managed Codex state opt-in (policy overrides mounted ro)
 out="$(
   AIRLOCK_ENGINE=true \
   AIRLOCK_DRY_RUN=1 \
   AIRLOCK_CODEX_HOME_MODE=airlock \
-  AIRLOCK_CONTEXT_DIR="$context_dir" \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
 printf '%s\n' "$out" | grep -q -- "-v $HOME/.airlock/codex-state:/home/airlock/.codex:rw" || fail "expected yolo to mount ~/.airlock/codex-state when AIRLOCK_CODEX_HOME_MODE=airlock"
 printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro' || fail "expected yolo to mount policy config.toml ro when AIRLOCK_CODEX_HOME_MODE=airlock"
-printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro' || fail "expected yolo to mount policy AGENTS.md ro when AIRLOCK_CODEX_HOME_MODE=airlock"
+if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro'; then
+  fail "expected yolo to NOT mount a policy AGENTS.md (use host ~/.codex/AGENTS.md instead)"
+fi
 ok "yolo airlock codex home opt-in: ok"
 
-## yolo: context default is created under ~/tmp/airlock_context
-rm -rf "$HOME/tmp/airlock_context"
+## yolo: extra dirs (ro + rw mounts); forwards rw mounts to codex --add-dir
 out="$(
   AIRLOCK_ENGINE=true \
   AIRLOCK_DRY_RUN=1 \
-  DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
-  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+  stow/airlock/bin/yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- codex --profile yolo --help
 )"
-[[ -d "$HOME/tmp/airlock_context" ]] || fail "expected yolo to create default context dir under ~/tmp/airlock_context"
-printf '%s\n' "$out" | grep -q -- "-v $HOME/tmp/airlock_context:/context:ro" || fail "expected yolo to mount default context dir ro"
-ok "yolo context default: ok"
+printf '%s\n' "$out" | grep -q -- "-v $ro_dir:/host$ro_dir:ro" || fail "expected yolo --mount-ro to bind-mount ro"
+printf '%s\n' "$out" | grep -q -- "-v $rw_dir:/host$rw_dir:rw" || fail "expected yolo --add-dir to bind-mount rw"
+printf '%s\n' "$out" | grep -q -- " codex " || fail "expected yolo to run codex"
+printf '%s\n' "$out" | grep -q -- "--add-dir /host$rw_dir" || fail "expected yolo to inject codex --add-dir for rw mount"
+if printf '%s\n' "$out" | grep -q -- "--add-dir /host$ro_dir"; then
+  fail "expected yolo to NOT inject codex --add-dir for ro mount"
+fi
+ok "yolo extra dirs + codex injection: ok"
+
+## yolo: codex fails fast if host ~/.codex/config.toml is unreadable
+# Note: this is only meaningful when running as a non-root user; root can read 000 files.
+if [[ "$(id -u)" -eq 0 ]]; then
+  ok "yolo unreadable host config guard: n/a (running as root)"
+else
+  mkdir -p "$HOME/.codex"
+  printf '%s\n' "# test" >"$HOME/.codex/config.toml"
+  chmod 000 "$HOME/.codex/config.toml"
+
+  set +e
+  out="$(
+    AIRLOCK_ENGINE=true \
+    AIRLOCK_DRY_RUN=1 \
+    stow/airlock/bin/yolo -- codex --help 2>&1
+  )"
+  status=$?
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected yolo to exit non-zero when host ~/.codex/config.toml is unreadable"
+  printf '%s\n' "$out" | grep -q 'ERROR: host Codex config not readable' || fail "expected yolo to print an actionable error for unreadable host codex config"
+
+  chmod 600 "$HOME/.codex/config.toml"
+  ok "yolo unreadable host config guard: ok"
+fi
 
 ## yolo: if run from a git subdir, mount repo root so `.git/` is available
 if command -v git >/dev/null 2>&1; then
@@ -161,13 +304,10 @@ if command -v git >/dev/null 2>&1; then
   out="$(
     AIRLOCK_ENGINE=true \
     AIRLOCK_DRY_RUN=1 \
-    AIRLOCK_CONTEXT_DIR="$context_dir" \
-    DRAFTS_DIR="$HOME/.airlock/outbox/drafts" \
     "$REPO_ROOT/stow/airlock/bin/yolo" -- bash -lc 'echo ok'
   )"
   popd >/dev/null
 
-  printf '%s\n' "$out" | grep -q -- "-v $workrepo:/work:rw" || fail "expected yolo to mount git repo root at /work"
   printf '%s\n' "$out" | grep -q -- "-v $workrepo:/host$workrepo:rw" || fail "expected yolo to mount git repo root at canonical /host path"
   printf '%s\n' "$out" | grep -q -- "-w /host$workrepo/sub/dir" || fail "expected yolo to set canonical workdir to subdir within mounted repo"
   ok "yolo git-root mount: ok"

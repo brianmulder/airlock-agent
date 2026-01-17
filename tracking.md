@@ -3,19 +3,12 @@
 Use this file as the task-level checklist for implementing the Airlock repo and workflow described in
 `PLAN.md`.
 
-## Phase 0 — Prereqs and Baseline Validation
+## Phase 0 — Host Prereqs (Optional Hardening)
 
-- [ ] Confirm Windows 11 + WSL2 working
-- [ ] Confirm container engine running + WSL integration enabled
-- [ ] Confirm Dropbox is installed and synced on Windows
-- [ ] Create a dedicated context subfolder (e.g., `Dropbox\\fred`)
-- [ ] Update `/etc/wsl.conf` (disable automount; optional interop disable)
-- [ ] Update `/etc/fstab` (mount only the context subfolder into WSL)
-- [ ] Run `wsl --shutdown` and reopen the distro
-- [ ] Quality gate: no surprise Windows mounts under `/mnt/*`
-- [ ] Quality gate: context mount exists at `~/dropbox/fred` (or configured path)
-- [ ] Quality gate: `${AIRLOCK_ENGINE:-docker} info` succeeds from WSL
-- [ ] DoD: WSL is “manager-safe” and context is explicitly mounted
+- [ ] Confirm the container engine is running (`${AIRLOCK_ENGINE:-podman} info`)
+- [ ] Quality gate: `yolo` launches and shows the expected mounts
+- [ ] Optional hardening: apply platform-specific mount hardening (see `docs/WSL_HARDENING.md` for one example)
+- [ ] DoD: Airlock runs end-to-end; hardening is documented and can be applied when desired
 
 ## Phase 1 — Repo Scaffold
 
@@ -23,7 +16,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Create directories: `docs/`, `scripts/`, `stow/airlock/`
 - [x] Add baseline docs: `README.md`
 - [x] Add tutorial docs: `docs/RUNBOOK.md`
-- [x] Add WSL hardening doc: `docs/WSL_HARDENING.md`
+- [x] Add host hardening doc (platform example): `docs/WSL_HARDENING.md`
 - [x] Add threat model doc: `docs/THREAT_MODEL.md`
 - [x] Quality gate: docs label commands as “required” vs “example”
 - [x] Quality gate: repo tree matches `PLAN.md` design
@@ -41,7 +34,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Add wrapper: `scripts/uninstall.sh`
 - [x] Quality gate: `stow -d ./stow -t ~ airlock` is idempotent
 - [ ] Quality gate: `airlock-doctor` checks required files + key prerequisites
-- [ ] DoD: install/uninstall works cleanly via Stow
+- [ ] DoD: install/uninstall works cleanly via Stow (install confirmed; uninstall pending)
 
 ## Phase 3 — Agent Image (Devcontainer Base + Two‑Way Door)
 
@@ -56,32 +49,37 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 
 ## Phase 4 — Launcher (`yolo`) + Policy Boundaries
 
-- [x] `yolo` mounts: `/work` (rw), `/context` (ro), `/drafts` (rw on WSL ext4)
-- [x] Persist Codex state via `CODEX_HOME` under `~/.airlock/codex-state`
+- [x] `yolo` mounts workspace at `/host<host-path>` (rw) and uses a canonical `/host<host-path>` workdir by default
+- [x] `yolo --mount-ro <DIR>`: bind-mounts host inputs read-only at `/host<abs>`
+- [x] `yolo --add-dir <DIR>`: bind-mounts host outputs read-write at `/host<abs>` and forwards to Codex as `--add-dir`
+- [x] Default Codex state: mount host `~/.codex/` (rw) into container
+- [x] Strict mode: `AIRLOCK_CODEX_HOME_MODE=airlock` persists state under `~/.airlock/codex-state` with policy overrides
 - [x] Default network = bridge; `AIRLOCK_NETWORK=host` is opt-in
-- [x] Guardrail: fail if drafts live under context dir (no same-filesystem RO bypass)
 - [x] Guardrail: pre-create host dirs to avoid root-owned folders
-- [ ] Quality gate (in container): `touch /context/nope` fails
-- [ ] Quality gate (in container): `touch /drafts/ok` succeeds
-- [ ] Quality gate (in container): `touch /work/ok` succeeds
+- [x] Git ergonomics: mount git repo root to `/host<path>` and use canonical workdir to avoid tool collisions
+- [x] Git safety: container entrypoint sets `safe.directory` so `git status` works on bind mounts
+- [x] Engine passthrough: host engine socket is mounted when available so container builds can run inside `yolo`
+- [ ] Quality gate (in container): with `--mount-ro`, writes fail
+- [ ] Quality gate (in container): with `--add-dir`, writes succeed
+- [ ] Quality gate (in container): `touch "$PWD/ok"` succeeds
 - [ ] Quality gate (in container): `mount` shows only expected explicit binds
-- [ ] DoD: RO context stays RO; artifacts land in quarantine outbox
+- [ ] DoD: RO mounts stay RO; RW mounts stay RW; nothing is implicit
 
 ## Phase 5 — Runbook + Step-by-Step Tutorial
 
 - [x] Write/refresh `docs/RUNBOOK.md` as the canonical end-to-end tutorial
-- [x] Add “promotion flow” steps (drafts → review → copy into repo/Dropbox)
+- [x] Add “promotion flow” steps (outbox → review → copy into repo)
 - [x] Document dogfooding options in runbook (submodule vs vendoring)
-- [x] Write/refresh `docs/WSL_HARDENING.md` with exact snippets + rollback steps
+- [x] Write/refresh `docs/WSL_HARDENING.md` (platform example) with exact snippets + rollback steps
 - [ ] Quality gate: a fresh user can follow the runbook end-to-end without guessing
 - [x] Quality gate: paths are parameterized (no hard-coded usernames)
-- [ ] DoD: docs reproduce setup on a new WSL install
+- [ ] DoD: docs reproduce setup on a new machine
 
 ## Phase 6 — Tests and Quality Gates (Lint / Unit / System)
 
 - [x] Add local test entrypoints (`./scripts/test*.sh`)
-- [x] Add `AIRLOCK_ENGINE` support (`docker|podman|nerdctl`) to scripts
-- [ ] Add optional Markdown linting command and/or CI target
+- [x] Add `AIRLOCK_ENGINE` support (`podman|docker|nerdctl`) to scripts (default: `podman`)
+- [x] Add optional Markdown linting (`.markdownlint-cli2.yaml` + `./scripts/test-lint.sh` best-effort)
 - [ ] Add GitHub Actions workflow: run lint + unit (+ smoke where possible)
 - [x] Quality gate: `./scripts/test.sh` passes (or clearly SKIPs missing system deps)
 - [ ] Quality gate: CI passes on a clean runner
@@ -100,6 +98,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 ## Phase 8 — Release + Maintenance
 
 - [ ] Tag first release (e.g., `v0.1.0`) after dogfooding
+- [ ] Publish repo to GitHub
 - [ ] Document upgrade/pinning: `AIRLOCK_CODEX_VERSION`, `AIRLOCK_BASE_IMAGE`
 - [ ] Document “keep container engine updated” as an operational control
 - [ ] DoD: stable starter release exists with a working tutorial
@@ -112,7 +111,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 
 - [ ] `stow -d <repo>/stow -t ~ airlock` installs binaries + templates
 - [ ] `airlock-build` produces a runnable image (default base + override)
-- [ ] `yolo` enforces RO `/context` and RW `/drafts` on WSL ext4
-- [ ] `airlock-doctor` passes on a standard WSL2 + container engine setup
+- [ ] `yolo` provides a writable workspace and explicit RO/RW mounts via flags
+- [ ] `airlock-doctor` passes on a standard Linux + container engine setup
 - [ ] `./scripts/test.sh` provides lint + unit + smoke coverage
 - [ ] `docs/RUNBOOK.md` reproduces the setup end-to-end

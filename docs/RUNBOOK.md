@@ -4,20 +4,15 @@ This runbook is a step-by-step tutorial for installing, using, and dogfooding Ai
 
 ## 1) Prerequisites
 
-- Windows 11 with WSL2.
-- A container engine (default: Podman) with WSL integration enabled.
-- Dropbox installed on Windows with a dedicated context subfolder (example: `Dropbox\\fred`).
-- A WSL distro with `sudo` access.
+- A Linux host with `sudo`.
+- A container engine (default: Podman).
+- GNU Stow.
 
 Supported engines (set `AIRLOCK_ENGINE` to select):
 
 - `docker` (Docker Desktop)
 - `nerdctl` (commonly used with Rancher Desktop / containerd)
 - `podman` (Podman / Podman Desktop)
-
-Podman note (WSL): if you see warnings about missing `/run/user/<uid>/bus`, install `dbus-user-session`
-and enable lingering (`sudo loginctl enable-linger $(id -u)`). Airlock also defaults Podman builds to
-`--isolation=chroot` to avoid common WSL/systemd runtime issues.
 
 If `podman run` feels “stuck” before the container prints anything, enable coarse timing to confirm where
 the delay is:
@@ -26,15 +21,13 @@ the delay is:
 AIRLOCK_TIMING=1 AIRLOCK_ENGINE=podman yolo -- bash -lc 'true'
 ```
 
-## 2) Harden WSL and Mount Context
+## 2) Prepare a Context Directory
 
-Follow `docs/WSL_HARDENING.md` to:
+Airlock does not mount any “extra” directories by default. If you want to provide read-only inputs or a
+separate writable outbox, mount them explicitly:
 
-- Disable automatic Windows drive mounts.
-- Mount only your context subfolder into WSL (not all of Dropbox).
-
-If you’re not ready to mount Dropbox yet, `yolo` still runs: it will create an empty context directory at
-`~/tmp/airlock_context` and mount it read-only as `/context`.
+- Read-only: `yolo --mount-ro /path/to/inputs -- ...` (mounted at `/host<abs>` inside the container)
+- Read-write: `yolo --add-dir /path/to/outbox -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`)
 
 ## 3) Install Airlock via Stow
 
@@ -88,11 +81,11 @@ Required:
 airlock-doctor
 ```
 
-Fix any warnings before proceeding (most issues are WSL mount or Docker connectivity).
+Fix any warnings before proceeding (most issues are mount paths or engine connectivity).
 
 ## 6) Daily Use
 
-From a WSL-native repo (ext4, not `/mnt/c`):
+From a project repo on a local filesystem:
 
 Required:
 
@@ -101,15 +94,8 @@ cd ~/code/your-project
 yolo
 ```
 
-Note: `/work` is always available as the short alias, but the default container working directory is a canonical
-`/host<WSL-path>` so Codex and git tooling don’t conflate sessions across different repos.
-
-If you mounted a Dropbox context folder into WSL, point `yolo` at it:
-
-```bash
-export AIRLOCK_CONTEXT_DIR=~/dropbox/fred
-yolo
-```
+Note: the workspace is mounted at a canonical `/host<host-path>` so Codex and git tooling don’t conflate
+sessions across different repos.
 
 Example (optional engine selection):
 
@@ -125,12 +111,18 @@ Required:
 codex
 ```
 
+Recommended:
+
+```bash
+yolo -- codex
+```
+
 Auth persistence note:
 - By default, `yolo` mounts your host `~/.codex/` into the container (rw), so your login/config “just works”.
 - If you prefer Airlock-managed state under `~/.airlock/codex-state/` (with policy overrides), opt in:
 
 ```bash
-AIRLOCK_CODEX_HOME_MODE=airlock yolo
+AIRLOCK_CODEX_HOME_MODE=airlock yolo -- codex
 ```
 
 - To reuse an existing host login with Airlock-managed state:
@@ -146,7 +138,10 @@ chmod 600 ~/.airlock/codex-state/auth.json
 This validates mounts and basic mechanics without running `codex`:
 
 ```bash
-yolo -- bash -lc 'set -e; touch /work/ok; touch /drafts/ok; ! touch /context/nope'
+ro_dir="$(mktemp -d)"; rw_dir="$(mktemp -d)"
+echo "hello" >"$ro_dir/hello.txt"
+yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- bash -lc \
+  'set -e; test -f "/host'"$ro_dir"'/hello.txt"; touch "/host'"$rw_dir"'/ok"; ! touch "/host'"$ro_dir"'/nope"'
 ```
 
 To run the full system smoke test script (stow → build → yolo), allow pulls if needed:
@@ -157,14 +152,15 @@ AIRLOCK_PULL=1 AIRLOCK_ENGINE=podman ./scripts/test-system.sh
 
 ## 8) Review + Promote Outputs
 
-- Agent artifacts are written to `~/.airlock/outbox/drafts/`.
-- Review in WSL (Neovim, git diff).
-- Manually copy approved outputs into your repo or Dropbox:
+- Prefer a dedicated writable outbox on the host and mount it with `--add-dir`.
+- Review on the host (Neovim, git diff) before copying anything into your repo.
 
 Example:
 
 ```bash
-cp ~/.airlock/outbox/drafts/thing.patch ~/dropbox/fred/outbox/reviewed/
+mkdir -p ~/tmp/airlock-outbox
+yolo --add-dir ~/tmp/airlock-outbox -- codex
+# ...review ~/tmp/airlock-outbox/* on the host, then copy/commit as desired...
 ```
 
 ## 9) Dogfooding from Dotfiles (Stow)
@@ -189,6 +185,7 @@ stow -t ~ airlock
 
 ## 10) Troubleshooting
 
-- If `/mnt/c` appears, re-check `/etc/wsl.conf` and run `wsl --shutdown`.
-- If `airlock-build` fails, confirm Docker Desktop is running.
-- If context is missing, confirm your `/etc/fstab` entry and Dropbox path.
+- If `airlock-build` fails, confirm your selected engine is working (try: `${AIRLOCK_ENGINE:-podman} info`).
+- If a mount is missing, confirm the host directory exists and your `yolo --mount-ro/--add-dir` flags are correct.
+- If you need to build/run containers from inside `yolo`, ensure your host engine socket is available
+  (run `airlock-doctor` for the suggested setup).

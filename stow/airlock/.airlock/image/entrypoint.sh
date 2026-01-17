@@ -19,8 +19,8 @@ ensure_writable_home() {
 
 ensure_git_safe_workdir() {
   # Git 2.35+ refuses to operate in repos owned by another UID unless marked safe.
-  # In containers (especially rootless userns setups), /work can appear "dubious" even when it's your repo.
-  # Make /work safe inside the container without touching the host.
+  # In containers (especially rootless userns setups), bind-mounted repos can appear "dubious" even when it's your repo.
+  # Make the workspace safe inside the container without touching the host.
   command -v git >/dev/null 2>&1 || return 0
 
   add_safe_dir() {
@@ -36,10 +36,28 @@ ensure_git_safe_workdir() {
     fi
   }
 
-  IFS=':' read -r -a dirs <<<"${AIRLOCK_GIT_SAFE_DIRS:-/work}"
+  IFS=':' read -r -a dirs <<<"${AIRLOCK_GIT_SAFE_DIRS:-}"
   for dir in "${dirs[@]}"; do
     add_safe_dir "$dir"
   done
+}
+
+is_codex_cmd() {
+  local cmd="${1:-}"
+  [[ "$cmd" == "codex" || "$cmd" == */codex ]]
+}
+
+check_codex_config_readable() {
+  is_codex_cmd "${1:-}" || return 0
+  [[ -n "${CODEX_HOME:-}" ]] || return 0
+
+  local cfg="$CODEX_HOME/config.toml"
+  if [[ -e "$cfg" && ! -r "$cfg" ]]; then
+    echo "ERROR: codex config not readable: $cfg" >&2
+    echo "Hint: this usually means the host ~/.codex was written by another user (often via sudo)." >&2
+    echo "Fix on host: sudo chown -R \"\$USER\":\"\$USER\" \"\$HOME/.codex\"" >&2
+    exit 1
+  fi
 }
 
 TARGET_UID="${AIRLOCK_UID:-1000}"
@@ -71,6 +89,7 @@ if [[ "$current_uid" -ne 0 ]]; then
     home_from_passwd="$(getent passwd "$current_uid" | cut -d: -f6 || true)"
     export HOME="${home_from_passwd:-/tmp}"
   fi
+  check_codex_config_readable "${1:-}"
   ensure_writable_home
   ensure_git_safe_workdir
 
@@ -82,6 +101,7 @@ fi
 if [[ "$is_rootless_userns" == "1" && "$TARGET_UID" != "0" ]]; then
   echo "WARN: running as root in a rootless user namespace; skipping UID switch for compatibility." >&2
   mkdir -p "${HOME:-/home/airlock}"
+  check_codex_config_readable "${1:-}"
   ensure_git_safe_workdir
   exec "$@"
 fi
@@ -106,7 +126,8 @@ export HOME="${HOME:-$RUN_AS_HOME}"
 
 # Make sure HOME exists and is owned by the runtime user
 mkdir -p "$HOME"
-chown -R "$TARGET_UID:$TARGET_GID" "$HOME" || true
+chown "$TARGET_UID:$TARGET_GID" "$HOME" >/dev/null 2>&1 || true
 
+check_codex_config_readable "${1:-}"
 ensure_git_safe_workdir
 exec gosu "$RUN_AS_USER" "$@"

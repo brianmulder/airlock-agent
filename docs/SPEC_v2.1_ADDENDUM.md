@@ -25,10 +25,10 @@ This addendum aligns the v2.1 spec with the repository implementation and Stow-b
 - `AIRLOCK_NETWORK=host` explicitly enables host networking.
 - On Docker Desktop, host networking requires enabling the feature.
 
-## E) Drafts Must Be WSL‑Native
+## E) Drafts Must Be Host‑Local
 
-- Outbox drafts live on WSL ext4 (e.g., `~/.airlock/outbox/drafts`).
-- Do not place drafts inside the Dropbox context folder.
+- Keep writable outputs host-local (prefer a Linux filesystem) and mount them explicitly via `yolo --add-dir ...`.
+- Avoid making the same host tree both read-only and writable via different mounts.
 - Prevents RO‑bypass via same-filesystem writable paths and avoids syncing unreviewed outputs.
 
 ## F) Security Claims Must Be Precise

@@ -2,8 +2,8 @@
 
 ## Project Structure & Module Organization
 
-- `chat-gpt-5.2-pro-extended-thinking.md`: the working technical specification for “The Airlock” (WSL + Docker “data diode” workflow).
-- `docs/`: runbook, WSL hardening, threat model, spec addendum.
+- `chat-gpt-5.2-pro-extended-thinking.md`: the working technical specification for “The Airlock”.
+- `docs/`: runbook, host hardening notes, threat model, spec addendum.
 - `stow/airlock/`: GNU Stow package installed into `$HOME` (binaries + `~/.airlock` templates).
 - `scripts/`: repo-local helpers (install/uninstall and test entrypoints).
 
@@ -15,12 +15,14 @@
 - System smoke test (requires container engine + stow): `./scripts/test-system.sh`
 - Engine selection: prefix commands with `AIRLOCK_ENGINE=podman|docker|nerdctl` (default: `podman`)
 - Timing/debug: set `AIRLOCK_TIMING=1` to timestamp `yolo` + container entrypoint startup.
-- Defaults: `yolo` uses `AIRLOCK_CONTEXT_DIR=~/tmp/airlock_context` (created if missing) and mounts host `~/.codex/` (rw).
-- Workdir: by default, `yolo` sets the container working directory to a canonical `/host<WSL-path>` (while still mounting `/work`) so tools don’t collide state across repos.
+- Defaults: `yolo` mounts host `~/.codex/` (rw) and does not mount any extra directories unless explicitly requested (`--mount-ro`, `--add-dir`).
+- Workdir: `yolo` sets the container working directory to a canonical `/host<host-path>` so tools don’t collide state across repos.
+- Markdown lint: `./scripts/test-lint.sh` runs `markdownlint-cli2` if available (install: `npm i -g markdownlint-cli2`).
 - Image build knobs:
   - `AIRLOCK_PULL=1|0` (default `1`)
-  - `AIRLOCK_BUILD_ISOLATION=chroot|oci|...` (Podman defaults to `chroot` on WSL)
+  - `AIRLOCK_BUILD_ISOLATION=chroot|oci|...` (Podman defaults to `chroot` for compatibility)
   - `AIRLOCK_NPM_VERSION=latest|<ver>` (default `latest`)
+ - Container builds inside `yolo`: `yolo` best-effort mounts the host engine socket so `podman`/`docker` commands work from inside the container.
 
 ## Coding Style & Naming Conventions
 
@@ -36,9 +38,9 @@
 - System tests should validate the full flow: stow → build → yolo → mount/network checks.
 - `./scripts/test-system.sh` auto-selects an engine when `AIRLOCK_ENGINE` is unset (prefers `podman`, then `docker`, then `nerdctl`).
 - `./scripts/test-unit.sh` uses a repo-local venv (`./.venv/`) and requires Python 3.11+ (for `tomllib`); set `AIRLOCK_PYTHON_BIN=python3.11`.
-- For stricter policy isolation, opt in to Airlock-managed Codex state: `AIRLOCK_CODEX_HOME_MODE=airlock yolo`.
+- For stricter policy isolation, opt in to Airlock-managed Codex state: `AIRLOCK_CODEX_HOME_MODE=airlock yolo -- codex`.
 - Treat warnings as actionable:
-  - Podman-on-WSL may emit systemd/user-bus/cgroup warnings; use the system smoke test to decide if they’re harmless.
+  - Podman may emit systemd/user-bus/cgroup warnings; use the system smoke test to decide if they’re harmless.
   - If Podman builds fail with `sd-bus`/`crun` errors, prefer `AIRLOCK_BUILD_ISOLATION=chroot`.
 
 ## Quality Principles

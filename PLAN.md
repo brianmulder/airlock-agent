@@ -6,16 +6,18 @@ stow-installable repo that you can dogfood from your dotfiles.
 ## Goals
 
 - Publish a repo at `~/code/github.com/brianmulder/airlock` that installs via GNU Stow.
-- Provide a safe default workflow: RO context (`/context`), RW workspace (`/work`), RW outbox (`/drafts`)
-  on WSL ext4 (not inside Dropbox).
+- Provide a safe default workflow: RW workspace mount only; any additional host access is via explicit
+  bind mounts (`yolo --mount-ro ...`, `yolo --add-dir ...`).
 - Use a high-quality devcontainer base image by default, but keep it a “two-way door” (easy to swap).
-- Support multiple container engines via `AIRLOCK_ENGINE` (default `docker`; also `podman`, `nerdctl`).
+- Support multiple container engines via `AIRLOCK_ENGINE` (default `podman`; also `docker`, `nerdctl`).
+- Make first-run “just work” without env vars:
+  - Use the host `~/.codex/` for Codex config/auth by default (opt in to stricter Airlock-managed state).
 
 ## Non-goals (v0.1)
 
 - Claiming Docker is a perfect security boundary.
-- Managing Dropbox/WSL/Docker Desktop installation for the user.
-- Supporting every shell/OS combination outside Windows + WSL2.
+- Managing host OS setup for the user.
+- Supporting every OS/desktop/container-engine permutation.
 
 ## Testing Strategy (Sandboxed)
 
@@ -26,28 +28,28 @@ ephemeral containers.
 - Unit tests: validate script behavior without a real engine by using `AIRLOCK_DRY_RUN=1` and stub
   engines (e.g., `AIRLOCK_ENGINE=true`).
 - System smoke test: validate the full flow (stow → build → yolo → mount + network sanity checks),
-  using a temp `$HOME` and a temp workspace/context. This must **not** run `codex`; it should prove
+  using a temp `$HOME`, a temp workspace, and explicit extra mounts. This must **not** run `codex`; it should prove
   the mechanics without the agent.
 - Engine matrix: system test should run at least on `docker`; it should also be runnable on
   community-supported alternatives like `podman` and `nerdctl` when available.
-  - Podman-on-WSL: prefer `podman build --isolation=chroot` to avoid systemd/dbus runtime issues.
+  - Podman: prefer `podman build --isolation=chroot` when OCI isolation fails due to runtime integration issues.
 
 ## Phase 0 — Prereqs and Baseline Validation
 
+This phase is mostly “host setup” and can be treated as **optional hardening**. Airlock is designed to run
+without special mounts by default, but hardened mounts are recommended for a stronger boundary.
+
 1. Confirm environment assumptions:
-   - Windows 11 + WSL2 distro available.
-   - A container engine installed/running with WSL integration enabled (Docker Desktop or an alternative).
-   - Dropbox folder present on Windows, and a dedicated context subfolder exists (e.g. `Dropbox\\fred`).
-2. Apply WSL hardening (documented steps):
-   - `/etc/wsl.conf`: disable automount; optionally disable interop.
-   - `/etc/fstab`: mount only the context subfolder (not all of Dropbox).
-3. Quality gates:
-   - After `wsl --shutdown`, WSL does **not** auto-mount Windows drives under `/mnt/*`.
-   - Context mount exists at `~/dropbox/fred` (or configured path).
-   - `docker info` works from WSL.
+   - A Linux environment with a working container engine.
+2. Optional host hardening (documented example: `docs/WSL_HARDENING.md`):
+   - Disable broad, automatic host drive mounts.
+   - Mount only the narrow inputs directory into your Linux environment (not “your whole home”).
+3. Quality gates (minimum):
+   - `yolo` launches and shows only explicit mounts.
+   - `${AIRLOCK_ENGINE:-podman} info` works from the host shell.
 
 Definition of done:
-- WSL is “manager-safe” (no surprise `/mnt/c`) and Dropbox context is mounted explicitly.
+- Airlock runs end-to-end; hardening is documented and can be applied when desired.
 
 ## Phase 1 — Repo Scaffold
 
@@ -57,7 +59,7 @@ Definition of done:
    - `stow/airlock/` for everything installable into `$HOME`.
 2. Add baseline docs:
    - `README.md` with quickstart and threat model summary.
-   - `docs/RUNBOOK.md`, `docs/WSL_HARDENING.md`, `docs/THREAT_MODEL.md`.
+   - `docs/RUNBOOK.md`, `docs/WSL_HARDENING.md` (optional host hardening example), `docs/THREAT_MODEL.md`.
 3. Quality gates:
    - All commands in docs are copy/pasteable and labelled “required” vs “example”.
    - Directory tree matches the repo design in the spec.
@@ -92,6 +94,7 @@ Definition of done:
 3. Implement `entrypoint.sh` to:
    - Create or reuse a user matching host `AIRLOCK_UID`/`AIRLOCK_GID`.
    - Ensure `HOME` and `CODEX_HOME` are stable.
+   - Ensure git works on bind mounts by setting `safe.directory` for the workspace mount.
 4. Quality gates:
    - `airlock-build` succeeds on a clean machine (no local assumptions).
    - Base image swap works: build succeeds with `AIRLOCK_BASE_IMAGE=...`.
@@ -103,41 +106,43 @@ Definition of done:
 ## Phase 4 — Launcher (`yolo`) + Policy Boundaries
 
 1. Implement `yolo` to enforce invariants:
-   - `/context` is RO (Dropbox-mounted context folder).
-   - `/drafts` is RW but stored on WSL ext4 (`~/.airlock/outbox/drafts`).
-   - `/work` is RW and is the current repo directory.
-   - Persist Codex state via `CODEX_HOME` under `~/.airlock/codex-state`.
+   - The workspace mount is RW and is the git repo root when inside a repo (so `.git/` is available from subdirs).
+   - Default working directory is a canonical `/host<host-path>` so tools like Codex don’t conflate different repos.
+   - No implicit “extra” mounts. Additional host access is explicit:
+     - Read-only inputs: `yolo --mount-ro <DIR> -- ...` (mounted at `/host<abs>`).
+     - Read-write outbox: `yolo --add-dir <DIR> -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`).
+   - Default Codex state is host `~/.codex/` (rw) so auth/config “just works”.
+     - Opt-in strict mode: `AIRLOCK_CODEX_HOME_MODE=airlock` persists state under `~/.airlock/codex-state` and
+       mounts policy `config.toml` read-only into `CODEX_HOME`.
    - Default network = bridge; `AIRLOCK_NETWORK=host` is opt-in.
 2. Guardrails:
-   - Fail fast if drafts live under the context directory (prevents RO-bypass footguns).
    - Create host directories up front to avoid root-owned folders.
+   - Make `git status` work by setting git `safe.directory` inside the container.
 3. Quality gates (manual checks run inside container):
-   - `touch /context/nope` fails.
-   - `touch /drafts/ok` succeeds.
-   - `touch /work/ok` succeeds.
+   - With `yolo --mount-ro <DIR> -- ...`, `touch /host<DIR>/nope` fails.
+   - With `yolo --add-dir <DIR> -- ...`, `touch /host<DIR>/ok` succeeds.
+   - `touch "$PWD/ok"` succeeds.
    - No unintentional host path mounts are present (`mount` output only shows explicit binds).
    - Smoke test can run without the agent: `yolo -- bash -lc '...'`.
 
 Definition of done:
-- The “data diode” behavior is real in practice: RO context stays RO; artifacts land in quarantine.
+- The “data diode” behavior is real in practice: inputs can be mounted RO; outputs can be mounted RW; nothing is implicit.
 
 ## Phase 5 — Runbook + Tutorial (Step-by-Step)
 
 1. Write `docs/RUNBOOK.md` as the canonical tutorial:
-   - WSL hardening steps, Stow install, image build, doctor checks, daily workflow, promotion flow.
+   - Host hardening notes (optional), Stow install, image build, doctor checks, daily workflow, promotion flow.
    - Dogfooding options:
      - submodule in dotfiles (`vendor/airlock`) + stow from there
      - vendoring the stow package directly
 2. Write `docs/WSL_HARDENING.md` with exact file snippets for:
-   - `/etc/wsl.conf`
-   - `/etc/fstab`
-   - recovery steps (how to undo / restore interop if needed)
+   - host-specific configuration and recovery steps (example platform: WSL).
 3. Quality gates:
    - A fresh user can follow the runbook end-to-end without guessing.
    - All paths are parameterized (no hard-coded usernames).
 
 Definition of done:
-- Documentation is sufficient to reproduce the setup on a new WSL install.
+- Documentation is sufficient to reproduce the setup on a new machine.
 
 ## Phase 6 — Tests and Quality Gates (Lint / Unit / System)
 
@@ -147,12 +152,12 @@ Definition of done:
    - `./scripts/test-system.sh` (smoke test: stow → build → yolo → checks)
    - `./scripts/test.sh` (runs all of the above)
 2. System smoke test requirements:
-   - Uses a temp `$HOME` and temp dirs for context/workspace/drafts.
+   - Uses a temp `$HOME`, a temp workspace, and explicit RO/RW extra mounts.
    - Runs `yolo` with a command override (no interactive prompt required).
    - Validates RO/RW mounts and basic network namespace config (bridge by default).
 3. Engine support requirements:
    - Add `AIRLOCK_ENGINE` to scripts (`airlock-build`, `airlock-doctor`, `yolo`).
-   - Test matrix: `docker` required; `podman`/`nerdctl` best-effort if installed.
+   - Test matrix: `podman` preferred; `docker`/`nerdctl` best-effort if installed.
 4. Add CI (recommended):
    - Run lint + unit tests on every PR.
    - Run system smoke test on a runner with a working engine.
@@ -192,7 +197,7 @@ Create `docs/SPEC_v2.1_ADDENDUM.md` capturing at least:
 - Portable UID/GID mapping via `AIRLOCK_UID`/`AIRLOCK_GID` + entrypoint.
 - `CODEX_HOME` as the containment boundary; config is TOML at `config.toml`.
 - Host networking is opt-in (and Docker Desktop requires enabling it).
-- Drafts must be on WSL ext4 and manually promoted into Dropbox after review.
+- Writable outputs should be host-local and mounted explicitly (e.g., via `yolo --add-dir ...`).
 - Any absolute security claims should be rewritten to precise, testable statements.
 
 ## Overall Definition of Done (Project)
@@ -200,7 +205,7 @@ Create `docs/SPEC_v2.1_ADDENDUM.md` capturing at least:
 - `stow -d <repo>/stow -t ~ airlock` installs: `yolo`, `airlock-build`, `airlock-doctor`, and
   `~/.airlock/{policy,image}` templates.
 - `airlock-build` produces a runnable image (default base + overrideable base).
-- `yolo` launches a container that enforces RO `/context` and RW `/drafts` on ext4.
-- `airlock-doctor` passes on a standard WSL2 + container engine setup.
+- `yolo` launches a container with a writable workspace and no implicit extra mounts; RO/RW behavior is defined by flags.
+- `airlock-doctor` passes on a standard Linux + container engine setup.
 - `./scripts/test.sh` provides lint + unit + smoke coverage for stow/image/yolo mechanics.
 - Docs in `docs/RUNBOOK.md` reproduce the setup end-to-end.

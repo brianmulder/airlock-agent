@@ -1,6 +1,6 @@
 # WSL Hardening
 
-Goal: prevent accidental access to Windows drives while allowing a narrow Dropbox context mount.
+Goal: prevent accidental access to Windows drives while allowing a narrow read-only inputs mount from a Windows path.
 
 ## 1) Disable Windows drive automount
 
@@ -23,13 +23,13 @@ Required: apply changes:
 wsl --shutdown
 ```
 
-## 2) Mount only the context subfolder
+## 2) Mount only the inputs subfolder
 
-Required: edit `/etc/fstab` (replace `YourWinUser` and the subfolder name):
+Required: edit `/etc/fstab` (replace `YourWinUser` and the source/target paths):
 
 ```text
-# <Source>                                   <Target>                <Type>  <Options>
-C:\Users\YourWinUser\Dropbox\fred            /home/youruser/dropbox/fred  drvfs   defaults,uid=1000,gid=1000,metadata 0 0
+# <Source>                                   <Target>                         <Type>  <Options>
+C:\Users\YourWinUser\SomeFolder\airlock_inputs  /home/youruser/inputs/airlock_inputs  drvfs   defaults,uid=1000,gid=1000,metadata 0 0
 ```
 
 Required: apply:
@@ -44,7 +44,7 @@ Required: verify from WSL:
 
 ```bash
 ls /mnt/c   # should fail or be absent if automount is disabled
-ls ~/dropbox/fred  # should list your context folder
+ls ~/inputs/airlock_inputs  # should list your inputs folder
 ```
 
 ## 4) Rollback

@@ -1,4 +1,11 @@
-export PATH="$PATH:/work/node_modules/.bin"
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$repo_root" ]]; then
+    export PATH="$PATH:$repo_root/node_modules/.bin"
+  fi
+else
+  export PATH="$PATH:$PWD/node_modules/.bin"
+fi
 setopt PROMPT_SUBST
 autoload -U colors && colors
 PROMPT='%F{cyan}airlock%f:%F{yellow}%~%f %# '

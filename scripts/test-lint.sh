@@ -19,6 +19,8 @@ shell_files=(
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/yolo
   stow/airlock/.airlock/image/entrypoint.sh
+  stow/airlock/.airlock/image/podman-wrapper.sh
+  stow/airlock/.airlock/image/docker-wrapper.sh
 )
 
 for file in "${shell_files[@]}"; do
@@ -46,9 +48,28 @@ exec_files=(
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/yolo
   stow/airlock/.airlock/image/entrypoint.sh
+  stow/airlock/.airlock/image/podman-wrapper.sh
+  stow/airlock/.airlock/image/docker-wrapper.sh
 )
 
 for file in "${exec_files[@]}"; do
   [[ -x "$file" ]] || fail "not executable: $file"
 done
 ok "executables: ok"
+
+if command -v markdownlint-cli2 >/dev/null 2>&1; then
+  markdownlint-cli2
+  ok "markdownlint: ok"
+elif command -v npx >/dev/null 2>&1; then
+  err="$(mktemp)"
+  if npx --yes markdownlint-cli2 >/dev/null 2>"$err"; then
+    ok "markdownlint: ok (via npx)"
+  else
+    echo "WARN: markdownlint-cli2 unavailable (npx run failed); skipping markdown lint."
+    sed -n '1,12p' "$err" | sed 's/^/  /' >&2 || true
+    echo "  Hint: install once to avoid npx downloads: npm i -g markdownlint-cli2" >&2
+  fi
+  rm -f "$err" || true
+else
+  echo "WARN: npx not found; skipping markdown lint."
+fi

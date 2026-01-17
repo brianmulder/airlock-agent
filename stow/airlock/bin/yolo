@@ -3,29 +3,39 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: yolo [--] [command...]
+Usage: yolo [options] [--] [command...]
 
 Launch an ephemeral container with explicit mounts:
-  - /work    (rw)  current directory
-  - /context (ro)  Dropbox-mounted context folder
-  - /drafts  (rw)  WSL-native outbox drafts
+  - /host<host-path>      (rw)  workspace mount (repo root when inside git)
+  - /home/airlock/.codex  (rw)  host ~/.codex (default) or Airlock-managed state (opt-in)
 
 Examples:
   yolo
   yolo -- bash -lc 'id; mount | head'
+  yolo -- codex --profile yolo
+  yolo --add-dir ~/tmp/outbox -- codex --profile yolo
+  yolo --mount-ro ~/tmp/inputs -- bash -lc 'ls -la /host$PWD'
+
+Options:
+  --add-dir <DIR>     Bind-mount host DIR read-write at /host<abs>.
+                      If the command is `codex`, forwards as `--add-dir /host<abs>`.
+  --mount-ro <DIR>    Bind-mount host DIR read-only at /host<abs>.
+  --name <NAME>       Container name override (default: airlock-<basename of $PWD>).
+  --new               Start a new container if the default name is already running.
+  -h, --help          Show this help.
 
 Key env vars:
   AIRLOCK_ENGINE=podman|docker|nerdctl   Container engine command (default: podman)
   AIRLOCK_IMAGE=airlock-agent:local     Image tag to run
-  AIRLOCK_CONTEXT_DIR=~/tmp/airlock_context  Host context directory (created if missing)
   AIRLOCK_NETWORK=host                  Opt-in host networking (default: bridge)
   AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
   AIRLOCK_CODEX_HOME_MODE=host|airlock  Use host ~/.codex (default) or persist under ~/.airlock with policy overrides
-  AIRLOCK_WORKDIR_MODE=canonical|work   Use /host<path> as CWD (default) or stay under /work
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
   AIRLOCK_TIMING=1                      Print coarse timing around engine run (also enables entrypoint timing)
   AIRLOCK_DRY_RUN=1                     Print the engine command and exit
+  AIRLOCK_MOUNT_ROS=/a:/b               Extra read-only mounts (colon-separated host dirs)
+  AIRLOCK_ADD_DIRS=/x:/y                Extra read-write mounts (colon-separated host dirs; forwarded to codex as --add-dir)
 USAGE
 }
 
@@ -35,63 +45,115 @@ case "${1:-}" in
     exit 0
     ;;
 esac
-if [[ "${1:-}" == "--" ]]; then
-  shift
-fi
+
+ADD_DIR_HOSTS=()
+MOUNT_RO_HOSTS=()
+YOLO_NEW=0
+YOLO_NAME_OVERRIDE=""
+while (( $# > 0 )); do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --add-dir)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --add-dir requires a path" >&2; exit 1; }
+      ADD_DIR_HOSTS+=("$2")
+      shift 2
+      ;;
+    --add-dir=*)
+      ADD_DIR_HOSTS+=("${1#--add-dir=}")
+      shift
+      ;;
+    --mount-ro)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --mount-ro requires a path" >&2; exit 1; }
+      MOUNT_RO_HOSTS+=("$2")
+      shift 2
+      ;;
+    --mount-ro=*)
+      MOUNT_RO_HOSTS+=("${1#--mount-ro=}")
+      shift
+      ;;
+    --name)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --name requires a value" >&2; exit 1; }
+      YOLO_NAME_OVERRIDE="$2"
+      shift 2
+      ;;
+    --name=*)
+      YOLO_NAME_OVERRIDE="${1#--name=}"
+      shift
+      ;;
+    --new)
+      YOLO_NEW=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    --*)
+      echo "ERROR: unknown option: $1" >&2
+      echo "Hint: use -- to separate yolo options from the container command." >&2
+      exit 1
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
 AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
-AIRLOCK_WORKDIR_MODE="${AIRLOCK_WORKDIR_MODE:-canonical}"
+AIRLOCK_RUN_AS_HOST_USER="${AIRLOCK_RUN_AS_HOST_USER:-1}"
 
-# Context: default local (RO in container). Override to a mounted Dropbox folder if desired.
-AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/tmp/airlock_context}"
+ENGINE_NAME="$(basename "$AIRLOCK_ENGINE")"
 
-# Hot-zone runtime state (WSL ext4, RW)
+# Some engines are accessed via wrapper CLIs (e.g., `podman` wrapper dispatching to `docker` for API
+# compatibility). Only enable podman-specific defaults when the underlying CLI supports them.
+engine_supports_keep_id_userns() {
+  local help
+  help="$("$AIRLOCK_ENGINE" run --help 2>/dev/null || true)"
+  printf '%s' "$help" | grep -q 'keep-id'
+}
+
+# Hot-zone runtime state (host-local, RW)
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
 CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
 CACHE_DIR="${CACHE_DIR:-$AIRLOCK_HOME/cache}"
-DRAFTS_DIR="${DRAFTS_DIR:-$AIRLOCK_HOME/outbox/drafts}"
 POLICY_DIR="${POLICY_DIR:-$AIRLOCK_HOME/policy}"
 
 # Policy files (stowed)
 CODEX_CONFIG="${CODEX_CONFIG:-$POLICY_DIR/codex.config.toml}"
-AGENTS_MD="${AGENTS_MD:-$POLICY_DIR/AGENTS.md}"
 AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$POLICY_DIR/zshrc}"
 
-# Workspace (bind-mounted to /work). If inside a git repo, mount the repo root so `.git/` is available.
+# Workspace (bind-mounted to /host<abs>). If inside a git repo, mount the repo root so `.git/` is available.
 WORK_DIR="$(pwd)"
+HOST_WORK_DIR="$WORK_DIR"
+if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$HOST_WORK_DIR" == /host/* ]]; then
+  HOST_WORK_DIR="${HOST_WORK_DIR#/host}"
+fi
 WORK_MOUNT_SRC="$WORK_DIR"
-WORK_CONTAINER_WD="/work"
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [[ -n "$git_root" && -d "$git_root" ]]; then
     WORK_MOUNT_SRC="$git_root"
-    if [[ "$WORK_DIR" != "$git_root" ]]; then
-      rel="${WORK_DIR#"$git_root"/}"
-      WORK_CONTAINER_WD="/work/$rel"
-    fi
   fi
+fi
+HOST_WORK_MOUNT_SRC="$WORK_MOUNT_SRC"
+if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$HOST_WORK_MOUNT_SRC" == /host/* ]]; then
+  HOST_WORK_MOUNT_SRC="${HOST_WORK_MOUNT_SRC#/host}"
 fi
 
 # Canonical workdir path (helps tools like Codex disambiguate sessions across repos).
-CANON_MOUNT_TARGET="/host$WORK_MOUNT_SRC"
-CANON_CONTAINER_WD="/host$WORK_DIR"
-case "$AIRLOCK_WORKDIR_MODE" in
-  canonical) ;;
-  work)
-    CANON_MOUNT_TARGET=""
-    CANON_CONTAINER_WD="$WORK_CONTAINER_WD"
-    ;;
-  *)
-    echo "ERROR: invalid AIRLOCK_WORKDIR_MODE: $AIRLOCK_WORKDIR_MODE (expected: canonical|work)" >&2
-    exit 1
-    ;;
-esac
+CANON_MOUNT_TARGET="/host$HOST_WORK_MOUNT_SRC"
+CANON_CONTAINER_WD="/host$HOST_WORK_DIR"
 
 # Identity
 AIRLOCK_UID="$(id -u)"
 AIRLOCK_GID="$(id -g)"
+AIRLOCK_USER_NAME="$(id -un 2>/dev/null || true)"
+[[ -n "$AIRLOCK_USER_NAME" ]] || AIRLOCK_USER_NAME="$AIRLOCK_UID"
 
 command -v "$AIRLOCK_ENGINE" >/dev/null || {
   echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
@@ -101,23 +163,25 @@ command -v "$AIRLOCK_ENGINE" >/dev/null || {
 
 req_dir() { [[ -d "$1" ]] || { echo "ERROR: missing directory: $1" >&2; exit 1; }; }
 req_file() { [[ -f "$1" ]] || { echo "ERROR: missing file: $1" >&2; exit 1; }; }
+warn() { echo "WARN: $*" >&2; }
 
-mkdir -p "$AIRLOCK_CONTEXT_DIR"
-req_dir "$AIRLOCK_CONTEXT_DIR"
 req_file "$AIRLOCK_ZSHRC"
 
 CODEX_MOUNT_SRC=""
 CODEX_MOUNTS=()
 CODEX_HOME_LABEL=""
+HOST_CODEX_DIR=""
 
 case "$AIRLOCK_CODEX_HOME_MODE" in
   airlock)
     req_file "$CODEX_CONFIG"
-    req_file "$AGENTS_MD"
     CODEX_MOUNT_SRC="$CODEX_STATE_DIR"
+    host_cfg="$CODEX_CONFIG"
+    if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_cfg" == /host/* ]]; then
+      host_cfg="${host_cfg#/host}"
+    fi
     CODEX_MOUNTS+=(
-      -v "$CODEX_CONFIG":/home/airlock/.codex/config.toml:ro
-      -v "$AGENTS_MD":/home/airlock/.codex/AGENTS.md:ro
+      -v "$host_cfg":/home/airlock/.codex/config.toml:ro
     )
     CODEX_HOME_LABEL="$CODEX_STATE_DIR (policy overrides: ro)"
     ;;
@@ -133,17 +197,62 @@ case "$AIRLOCK_CODEX_HOME_MODE" in
     ;;
 esac
 
-# Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
-mkdir -p "$CODEX_MOUNT_SRC" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm" "$DRAFTS_DIR"
+hostify_mount_src() {
+  local p="$1"
+  if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$p" == /host/* ]]; then
+    echo "${p#/host}"
+  else
+    echo "$p"
+  fi
+}
 
-# Guardrail: drafts must not live under context (prevents RO-bypass footguns)
-case "$DRAFTS_DIR" in
-  "$AIRLOCK_CONTEXT_DIR"/*)
-    echo "ERROR: DRAFTS_DIR is inside CONTEXT_DIR."
-    echo "Move drafts out of Dropbox/context to keep RO boundary meaningful."
+HOST_CODEX_MOUNT_SRC="$(hostify_mount_src "$CODEX_MOUNT_SRC")"
+HOST_CACHE_DIR="$(hostify_mount_src "$CACHE_DIR")"
+HOST_CACHE_DIR_NPM="$(hostify_mount_src "$CACHE_DIR/npm")"
+HOST_CACHE_DIR_PNPM="$(hostify_mount_src "$CACHE_DIR/pnpm")"
+HOST_AIRLOCK_ZSHRC="$(hostify_mount_src "$AIRLOCK_ZSHRC")"
+
+# Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
+mkdir -p "$CODEX_MOUNT_SRC" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm"
+
+# Guard rails: if your host Codex state is unreadable (often due to an accidental `sudo codex`),
+# yolo will run but Codex will fail. Warn early; fail only when actually running codex.
+check_host_codex_state() {
+  [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]] || return 0
+  [[ -n "$HOST_CODEX_DIR" ]] || return 0
+
+  if [[ ! -d "$HOST_CODEX_DIR" ]]; then
+    warn "host Codex dir missing: $HOST_CODEX_DIR (unexpected; yolo should have created it)"
+    return 0
+  fi
+
+  if [[ ! -r "$HOST_CODEX_DIR" || ! -w "$HOST_CODEX_DIR" || ! -x "$HOST_CODEX_DIR" ]]; then
+    warn "host Codex dir not accessible (need r/w/x): $HOST_CODEX_DIR"
+    warn "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_CODEX_DIR\""
+    return 0
+  fi
+
+  local cfg="$HOST_CODEX_DIR/config.toml"
+  if [[ -e "$cfg" && ! -r "$cfg" ]]; then
+    warn "host Codex config not readable: $cfg"
+    warn "This usually means Codex was run as root at least once."
+    warn "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_CODEX_DIR\""
+    return 0
+  fi
+}
+
+check_host_codex_state_or_die_for_codex() {
+  [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]] || return 0
+  [[ -n "$HOST_CODEX_DIR" ]] || return 0
+
+  local cfg="$HOST_CODEX_DIR/config.toml"
+  if [[ -e "$cfg" && ! -r "$cfg" ]]; then
+    echo "ERROR: host Codex config not readable: $cfg" >&2
+    echo "Hint: this usually means Codex was run as root at least once." >&2
+    echo "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_CODEX_DIR\"" >&2
     exit 1
-    ;;
-esac
+  fi
+}
 
 # Interactive args (allocates a tty only when attached to one, unless disabled).
 TTY_ARGS=()
@@ -158,7 +267,19 @@ if [[ "${AIRLOCK_RM:-1}" != "0" ]]; then
 fi
 
 # Name (override for smoke tests / parallel runs)
-AIRLOCK_CONTAINER_NAME="${AIRLOCK_CONTAINER_NAME:-airlock-$(basename "$WORK_DIR")}"
+if [[ -n "$YOLO_NAME_OVERRIDE" ]]; then
+  AIRLOCK_CONTAINER_NAME="$YOLO_NAME_OVERRIDE"
+else
+  AIRLOCK_CONTAINER_NAME="${AIRLOCK_CONTAINER_NAME:-airlock-$(basename "$WORK_DIR")}"
+fi
+
+new_container_name() {
+  local base="$1"
+  local suffix
+  suffix="$(date +%s 2>/dev/null || true)"
+  suffix="${suffix:-now}-$RANDOM-$$"
+  echo "${base}-${suffix}"
+}
 
 # Optional host networking
 NETWORK_ARGS=()
@@ -170,25 +291,170 @@ fi
 USERNS_ARGS=()
 if [[ -n "${AIRLOCK_USERNS:-}" ]]; then
   USERNS_ARGS+=(--userns="$AIRLOCK_USERNS")
-elif [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+elif [[ "$ENGINE_NAME" == "podman" ]] && engine_supports_keep_id_userns; then
   USERNS_ARGS+=(--userns=keep-id)
 fi
 
-echo "--- Airlock YOLO ---"
-echo "Engine:     $AIRLOCK_ENGINE"
-echo "Image:      $AIRLOCK_IMAGE"
-echo "Workspace:  $WORK_DIR (mounted: $WORK_MOUNT_SRC) -> /work (rw)"
-if [[ -n "$CANON_MOUNT_TARGET" ]]; then
-  echo "Workdir:    $CANON_CONTAINER_WD (canonical; also available at /work)"
-else
-  echo "Workdir:    $WORK_CONTAINER_WD"
+# Engine-specific user settings (prevents root-owned files on bind mounts for engines that default to root).
+USER_ARGS=()
+if [[ "$AIRLOCK_RUN_AS_HOST_USER" != "0" ]]; then
+  case "$ENGINE_NAME" in
+    docker|nerdctl)
+      USER_ARGS+=(--user "$AIRLOCK_UID:$AIRLOCK_GID")
+      ;;
+  esac
 fi
-echo "Context:    $AIRLOCK_CONTEXT_DIR -> /context (ro)"
-echo "Drafts:     $DRAFTS_DIR -> /drafts (rw)"
-echo "CODEX_HOME: /home/airlock/.codex <= $CODEX_HOME_LABEL"
-echo "Network:    ${AIRLOCK_NETWORK:-bridge}"
-echo "Name:       $AIRLOCK_CONTAINER_NAME"
-echo "---------------------"
+
+split_colon_list() {
+  local raw="$1"
+  local -n out="$2"
+  local entry
+  IFS=':' read -r -a out <<<"$raw"
+  # Drop empty entries (e.g., leading/trailing colon)
+  local cleaned=()
+  for entry in "${out[@]}"; do
+    [[ -n "$entry" ]] && cleaned+=("$entry")
+  done
+  out=("${cleaned[@]}")
+}
+
+ENV_ADD_DIR_HOSTS=()
+ENV_MOUNT_RO_HOSTS=()
+if [[ -n "${AIRLOCK_ADD_DIRS:-}" ]]; then
+  split_colon_list "$AIRLOCK_ADD_DIRS" ENV_ADD_DIR_HOSTS
+fi
+if [[ -n "${AIRLOCK_MOUNT_ROS:-}" ]]; then
+  split_colon_list "$AIRLOCK_MOUNT_ROS" ENV_MOUNT_RO_HOSTS
+fi
+
+extra_mounts=()
+codex_add_dirs=()
+for d in "${ENV_MOUNT_RO_HOSTS[@]}" "${MOUNT_RO_HOSTS[@]}"; do
+  [[ -d "$d" ]] || { echo "ERROR: --mount-ro is not a directory: $d" >&2; exit 1; }
+  abs="$(cd "$d" && pwd -P)"
+  host_abs="$abs"
+  if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_abs" == /host/* ]]; then
+    host_abs="${host_abs#/host}"
+  fi
+  target="/host$host_abs"
+  extra_mounts+=(-v "$host_abs":"$target":ro)
+done
+for d in "${ENV_ADD_DIR_HOSTS[@]}" "${ADD_DIR_HOSTS[@]}"; do
+  [[ -d "$d" ]] || { echo "ERROR: --add-dir is not a directory: $d" >&2; exit 1; }
+  abs="$(cd "$d" && pwd -P)"
+  host_abs="$abs"
+  if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_abs" == /host/* ]]; then
+    host_abs="${host_abs#/host}"
+  fi
+  target="/host$host_abs"
+  extra_mounts+=(-v "$host_abs":"$target":rw)
+  codex_add_dirs+=(--add-dir "$target")
+done
+
+is_codex_cmd() {
+  local cmd="${1:-}"
+  [[ "$cmd" == "codex" || "$cmd" == */codex ]]
+}
+
+yolo_cmd=("$@")
+if (( ${#yolo_cmd[@]} > 0 )) && is_codex_cmd "${yolo_cmd[0]}"; then
+  check_host_codex_state_or_die_for_codex
+else
+  check_host_codex_state
+fi
+if (( ${#yolo_cmd[@]} > 0 )) && is_codex_cmd "${yolo_cmd[0]}" && (( ${#codex_add_dirs[@]} > 0 )); then
+  yolo_cmd=("${yolo_cmd[0]}" "${codex_add_dirs[@]}" "${yolo_cmd[@]:1}")
+fi
+
+has_extra_mounts=0
+if [[ -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUNT_ROS:-}" || "${#ADD_DIR_HOSTS[@]}" -gt 0 || "${#MOUNT_RO_HOSTS[@]}" -gt 0 ]]; then
+  has_extra_mounts=1
+fi
+
+print_summary() {
+  local name="$1"
+  echo "--- Airlock YOLO ---"
+  echo "Engine:     $AIRLOCK_ENGINE"
+  echo "Image:      $AIRLOCK_IMAGE"
+  echo "Workspace:  $WORK_DIR (mounted: $HOST_WORK_MOUNT_SRC) -> $CANON_MOUNT_TARGET (rw)"
+  echo "Workdir:    $CANON_CONTAINER_WD"
+  echo "CODEX_HOME: /home/airlock/.codex <= $CODEX_HOME_LABEL"
+  if [[ "$has_extra_mounts" == "1" ]]; then
+    echo "Extra dirs: (see mounts below)"
+  fi
+  echo "Network:    ${AIRLOCK_NETWORK:-bridge}"
+  echo "Name:       $name"
+  echo "---------------------"
+}
+
+engine_container_exists() {
+  local name="$1"
+  "$AIRLOCK_ENGINE" inspect "$name" >/dev/null 2>&1
+}
+
+engine_container_running() {
+  local name="$1"
+  local running
+  running="$("$AIRLOCK_ENGINE" inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)"
+  [[ "$running" == "true" ]]
+}
+
+attach_to_running_container() {
+  local name="$1"
+  local exec_cmd=("$AIRLOCK_ENGINE" exec "${TTY_ARGS[@]}" -w "$CANON_CONTAINER_WD")
+
+  if [[ "$AIRLOCK_RUN_AS_HOST_USER" != "0" ]]; then
+    case "$ENGINE_NAME" in
+      docker|nerdctl)
+        exec_cmd+=(--user "$AIRLOCK_UID:$AIRLOCK_GID")
+        ;;
+    esac
+  fi
+
+  exec_cmd+=(
+    -e "HOME=/home/airlock"
+    -e "CODEX_HOME=/home/airlock/.codex"
+    "$name"
+  )
+
+  if (( ${#yolo_cmd[@]} > 0 )); then
+    exec_cmd+=("${yolo_cmd[@]}")
+  else
+    exec_cmd+=(zsh -l)
+  fi
+
+  print_summary "$name"
+  echo "INFO: container is already running; attaching: $name" >&2
+  exec "${exec_cmd[@]}"
+}
+
+if [[ "${AIRLOCK_DRY_RUN:-0}" != "1" ]]; then
+  if engine_container_exists "$AIRLOCK_CONTAINER_NAME"; then
+    if engine_container_running "$AIRLOCK_CONTAINER_NAME"; then
+      if [[ "$YOLO_NEW" == "1" ]]; then
+        AIRLOCK_CONTAINER_NAME="$(new_container_name "$AIRLOCK_CONTAINER_NAME")"
+        echo "INFO: name already in use; starting new container: $AIRLOCK_CONTAINER_NAME" >&2
+      else
+        if [[ "$has_extra_mounts" == "1" ]]; then
+          echo "ERROR: container is already running and cannot be modified with new mounts." >&2
+          echo "Hint: use --new (or set AIRLOCK_CONTAINER_NAME=...) to start a second container." >&2
+          exit 1
+        fi
+        attach_to_running_container "$AIRLOCK_CONTAINER_NAME"
+      fi
+    else
+      if [[ "$YOLO_NEW" == "1" ]]; then
+        AIRLOCK_CONTAINER_NAME="$(new_container_name "$AIRLOCK_CONTAINER_NAME")"
+        echo "INFO: name already exists (stopped); starting new container: $AIRLOCK_CONTAINER_NAME" >&2
+      else
+        echo "INFO: removing existing stopped container: $AIRLOCK_CONTAINER_NAME" >&2
+        "$AIRLOCK_ENGINE" rm "$AIRLOCK_CONTAINER_NAME" >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+fi
+
+print_summary "$AIRLOCK_CONTAINER_NAME"
 
 cmd=(
   "$AIRLOCK_ENGINE" run
@@ -196,35 +462,64 @@ cmd=(
   "${RM_ARGS[@]}"
   "${NETWORK_ARGS[@]}"
   "${USERNS_ARGS[@]}"
+  "${USER_ARGS[@]}"
   --name "$AIRLOCK_CONTAINER_NAME"
   -e "AIRLOCK_UID=$AIRLOCK_UID"
   -e "AIRLOCK_GID=$AIRLOCK_GID"
+  -e "AIRLOCK_YOLO=1"
   -e "AIRLOCK_TIMING=${AIRLOCK_TIMING:-0}"
   -e "HOME=/home/airlock"
   -e "CODEX_HOME=/home/airlock/.codex"
-  -v "$WORK_MOUNT_SRC":/work:rw
   -w "$CANON_CONTAINER_WD"
-  -v "$AIRLOCK_CONTEXT_DIR":/context:ro
-  -v "$DRAFTS_DIR":/drafts:rw
-  -v "$CODEX_MOUNT_SRC":/home/airlock/.codex:rw
+  -v "$HOST_WORK_MOUNT_SRC":"$CANON_MOUNT_TARGET":rw
+  -v "$HOST_CODEX_MOUNT_SRC":/home/airlock/.codex:rw
   "${CODEX_MOUNTS[@]}"
-  -v "$CACHE_DIR":/home/airlock/.cache:rw
-  -v "$CACHE_DIR/npm":/home/airlock/.npm:rw
-  -v "$CACHE_DIR/pnpm":/home/airlock/.local/share/pnpm:rw
-  -v "$AIRLOCK_ZSHRC":/home/airlock/.zshrc:ro
+  -v "$HOST_CACHE_DIR":/home/airlock/.cache:rw
+  -v "$HOST_CACHE_DIR_NPM":/home/airlock/.npm:rw
+  -v "$HOST_CACHE_DIR_PNPM":/home/airlock/.local/share/pnpm:rw
+  -v "$HOST_AIRLOCK_ZSHRC":/home/airlock/.zshrc:ro
 )
 
-if [[ -n "$CANON_MOUNT_TARGET" ]]; then
-  cmd+=(-v "$WORK_MOUNT_SRC":"$CANON_MOUNT_TARGET":rw)
-  cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=/work:$CANON_MOUNT_TARGET")
-else
-  cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=/work")
+cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=$CANON_MOUNT_TARGET")
+
+# Engine socket passthrough (to allow building/running containers from within yolo).
+ENGINE_SOCKET_MOUNTS=()
+ENGINE_SOCKET_ENVS=()
+
+if [[ "${AIRLOCK_MOUNT_ENGINE_SOCKET:-1}" != "0" ]]; then
+  if [[ "$ENGINE_NAME" == "docker" ]]; then
+    if [[ -S /var/run/docker.sock ]]; then
+      ENGINE_SOCKET_MOUNTS+=(-v /var/run/docker.sock:/var/run/docker.sock:rw)
+      ENGINE_SOCKET_ENVS+=(-e DOCKER_HOST=unix:///var/run/docker.sock)
+    fi
+  elif [[ "$ENGINE_NAME" == "podman" ]]; then
+    sock_host=""
+    for candidate in \
+      "${XDG_RUNTIME_DIR:-/run/user/$AIRLOCK_UID}/podman/podman.sock" \
+      "/run/user/$AIRLOCK_UID/podman/podman.sock" \
+      "/run/podman/podman.sock"
+    do
+      if [[ -S "$candidate" ]]; then
+        sock_host="$candidate"
+        break
+      fi
+    done
+    if [[ -n "$sock_host" ]]; then
+      ENGINE_SOCKET_MOUNTS+=(-v "$sock_host":/run/podman/podman.sock:rw)
+      ENGINE_SOCKET_ENVS+=(-e CONTAINER_HOST=unix:///run/podman/podman.sock)
+      ENGINE_SOCKET_ENVS+=(-e DOCKER_HOST=unix:///run/podman/podman.sock)
+    fi
+  fi
 fi
+
+cmd+=("${extra_mounts[@]}")
+cmd+=("${ENGINE_SOCKET_MOUNTS[@]}")
+cmd+=("${ENGINE_SOCKET_ENVS[@]}")
 
 cmd+=("$AIRLOCK_IMAGE")
 
-if (( $# > 0 )); then
-  cmd+=("$@")
+if (( ${#yolo_cmd[@]} > 0 )); then
+  cmd+=("${yolo_cmd[@]}")
 fi
 
 if [[ "${AIRLOCK_DRY_RUN:-0}" == "1" ]]; then
