@@ -6,13 +6,13 @@ ok() { echo "OK: $*"; }
 
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
-CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
-AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
+AIRLOCK_CONFIG_DIR="${AIRLOCK_CONFIG_DIR:-$AIRLOCK_HOME/config}"
+AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$AIRLOCK_CONFIG_DIR/zshrc}"
 
 req() { [[ -e "$1" ]] || fail "missing: $1"; }
 
-req "$AIRLOCK_HOME/policy/codex.config.toml"
 req "$AIRLOCK_HOME/image/agent.Dockerfile"
+req "$AIRLOCK_ZSHRC"
 req "$HOME/bin/yolo"
 req "$HOME/bin/airlock-build"
 req "$HOME/bin/airlock-doctor"
@@ -64,23 +64,17 @@ else
   echo "WARN: agent image missing: $IMAGE (run: airlock-build)"
 fi
 
-if [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]]; then
-  if [[ -f "$HOME/.codex/auth.json" ]]; then
-    ok "codex auth present (host): $HOME/.codex/auth.json"
-  else
-    echo "WARN: codex auth not found at $HOME/.codex/auth.json (codex will prompt on first run)"
-  fi
+if [[ -f "$HOME/.codex/auth.json" ]]; then
+  ok "codex auth present: $HOME/.codex/auth.json"
 else
-  if [[ -f "$CODEX_STATE_DIR/auth.json" ]]; then
-    ok "codex auth present: $CODEX_STATE_DIR/auth.json"
-  elif [[ -f "$HOME/.codex/auth.json" ]]; then
-    echo "WARN: codex auth missing in Airlock state: $CODEX_STATE_DIR/auth.json"
-    echo "      To reuse your host login, copy it into Airlock state:"
-    echo "        mkdir -p \"$CODEX_STATE_DIR\" && cp \"$HOME/.codex/auth.json\" \"$CODEX_STATE_DIR/auth.json\" && chmod 600 \"$CODEX_STATE_DIR/auth.json\""
-  else
-    echo "WARN: codex auth not found. First run will prompt for login and persist it under:"
-    echo "      $CODEX_STATE_DIR/auth.json"
-  fi
+  echo "OK: codex auth not found (codex will prompt on first run)"
+fi
+
+opencode_data_dir="${AIRLOCK_HOST_OPENCODE_DATA_DIR:-$HOME/.local/share/opencode}"
+if [[ -f "$opencode_data_dir/auth.json" ]]; then
+  ok "opencode auth present: $opencode_data_dir/auth.json"
+else
+  echo "OK: opencode auth not found (opencode will prompt on first run)"
 fi
 
 ok "basic checks complete"

@@ -10,10 +10,14 @@ AIRLOCK_BASE_IMAGE="${AIRLOCK_BASE_IMAGE:-mcr.microsoft.com/devcontainers/javasc
 # Two-way door: pin or float Codex CLI
 AIRLOCK_CODEX_VERSION="${AIRLOCK_CODEX_VERSION:-latest}"
 
+# Two-way door: pin or float OpenCode CLI
+AIRLOCK_OPENCODE_VERSION="${AIRLOCK_OPENCODE_VERSION:-latest}"
+
 AIRLOCK_BUILD_ISOLATION="${AIRLOCK_BUILD_ISOLATION:-}"
 AIRLOCK_BUILD_USERNS="${AIRLOCK_BUILD_USERNS:-}"
 AIRLOCK_PULL="${AIRLOCK_PULL:-1}"
 AIRLOCK_NPM_VERSION="${AIRLOCK_NPM_VERSION:-latest}"
+AIRLOCK_EDITOR_PKG="${AIRLOCK_EDITOR_PKG:-vim-tiny}"
 
 BUILD_CONTEXT="$HOME/.airlock/image"
 DOCKERFILE="$BUILD_CONTEXT/agent.Dockerfile"
@@ -78,7 +82,9 @@ echo "Engine:     $AIRLOCK_ENGINE"
 echo "Image:      $AIRLOCK_IMAGE"
 echo "Base image: $AIRLOCK_BASE_IMAGE"
 echo "Codex:      @openai/codex@$AIRLOCK_CODEX_VERSION"
+echo "OpenCode:   opencode-ai@$AIRLOCK_OPENCODE_VERSION"
 echo "npm:        npm@$AIRLOCK_NPM_VERSION"
+echo "Editor:     $AIRLOCK_EDITOR_PKG"
 echo "Image input:$AIRLOCK_IMAGE_INPUT_SHA"
 echo "Pull:       $AIRLOCK_PULL"
 if [[ "${#ENGINE_BUILD_ARGS[@]}" -gt 0 ]]; then
@@ -93,7 +99,9 @@ cmd=(
   -t "$AIRLOCK_IMAGE"
   --build-arg "BASE_IMAGE=$AIRLOCK_BASE_IMAGE"
   --build-arg "CODEX_VERSION=$AIRLOCK_CODEX_VERSION"
+  --build-arg "OPENCODE_VERSION=$AIRLOCK_OPENCODE_VERSION"
   --build-arg "NPM_VERSION=$AIRLOCK_NPM_VERSION"
+  --build-arg "EDITOR_PKG=$AIRLOCK_EDITOR_PKG"
   --build-arg "AIRLOCK_IMAGE_INPUT_SHA=$AIRLOCK_IMAGE_INPUT_SHA"
   "${ENGINE_BUILD_ARGS[@]}"
   -f "$DOCKERFILE"

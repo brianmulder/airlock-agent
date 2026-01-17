@@ -21,6 +21,7 @@ shell_files=(
   stow/airlock/.airlock/image/entrypoint.sh
   stow/airlock/.airlock/image/podman-wrapper.sh
   stow/airlock/.airlock/image/docker-wrapper.sh
+  stow/airlock/.airlock/image/xdg-open-wrapper.sh
 )
 
 for file in "${shell_files[@]}"; do
@@ -50,6 +51,7 @@ exec_files=(
   stow/airlock/.airlock/image/entrypoint.sh
   stow/airlock/.airlock/image/podman-wrapper.sh
   stow/airlock/.airlock/image/docker-wrapper.sh
+  stow/airlock/.airlock/image/xdg-open-wrapper.sh
 )
 
 for file in "${exec_files[@]}"; do

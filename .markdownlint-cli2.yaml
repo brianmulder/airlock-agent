@@ -2,7 +2,12 @@ globs:
   - "**/*.md"
 ignores:
   - "**/.venv/**"
+  # This file is a raw transcript and is intentionally excluded from linting.
+  - "docs/chatgpt-original-conversation-log.md"
 
 config:
   # Keep docs readable in diffs; don't hard-fail on long lines in prose/code.
   MD013: false
+  # Require a consistent marker for unordered lists within a document.
+  MD004:
+    style: consistent

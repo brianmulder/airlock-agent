@@ -2,13 +2,14 @@
 
 ## Project Structure & Module Organization
 
-- `chat-gpt-5.2-pro-extended-thinking.md`: the working technical specification for “The Airlock”.
-- `docs/`: runbook, host hardening notes, threat model, spec addendum.
+- `docs/chatgpt-original-conversation-log.md`: original conversation log (historical; not maintained).
+- `docs/`: runbook, threat model, spec addendum, and living decisions.
 - `stow/airlock/`: GNU Stow package installed into `$HOME` (binaries + `~/.airlock` templates).
 - `scripts/`: repo-local helpers (install/uninstall and test entrypoints).
 
 ## Build, Test, and Development Commands
 
+- Mandatory after any change: `make test`
 - Lint + tests: `./scripts/test.sh`
 - Lint only: `./scripts/test-lint.sh`
 - Unit tests only (no container engine required): `./scripts/test-unit.sh`
@@ -22,7 +23,7 @@
   - `AIRLOCK_PULL=1|0` (default `1`)
   - `AIRLOCK_BUILD_ISOLATION=chroot|oci|...` (Podman defaults to `chroot` for compatibility)
   - `AIRLOCK_NPM_VERSION=latest|<ver>` (default `latest`)
- - Container builds inside `yolo`: `yolo` best-effort mounts the host engine socket so `podman`/`docker` commands work from inside the container.
+- Container builds inside `yolo`: `yolo` best-effort mounts the host engine socket so `podman`/`docker` commands work from inside the container.
 
 ## Coding Style & Naming Conventions
 
@@ -37,8 +38,7 @@
 - Keep unit tests engine-free where possible (use `AIRLOCK_DRY_RUN=1` and stub engines like `AIRLOCK_ENGINE=true`).
 - System tests should validate the full flow: stow → build → yolo → mount/network checks.
 - `./scripts/test-system.sh` auto-selects an engine when `AIRLOCK_ENGINE` is unset (prefers `podman`, then `docker`, then `nerdctl`).
-- `./scripts/test-unit.sh` uses a repo-local venv (`./.venv/`) and requires Python 3.11+ (for `tomllib`); set `AIRLOCK_PYTHON_BIN=python3.11`.
-- For stricter policy isolation, opt in to Airlock-managed Codex state: `AIRLOCK_CODEX_HOME_MODE=airlock yolo -- codex`.
+- `./scripts/test-unit.sh` is engine-free and should not require host-specific tooling beyond common POSIX utils.
 - Treat warnings as actionable:
   - Podman may emit systemd/user-bus/cgroup warnings; use the system smoke test to decide if they’re harmless.
   - If Podman builds fail with `sd-bus`/`crun` errors, prefer `AIRLOCK_BUILD_ISOLATION=chroot`.

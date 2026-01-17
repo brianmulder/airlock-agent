@@ -1,17 +1,18 @@
-# Airlock Implementation Plan
+# Roadmap
 
-This plan turns the v2.1 “Airlock” spec in `chat-gpt-5.2-pro-extended-thinking.md` into a
-stow-installable repo that you can dogfood from your dotfiles.
+This roadmap turns the v2.1 “Airlock” spec in `docs/chatgpt-original-conversation-log.md` into a
+stow-installable repo you can dogfood from your dotfiles.
 
 ## Goals
 
 - Publish a repo at `~/code/github.com/brianmulder/airlock` that installs via GNU Stow.
-- Provide a safe default workflow: RW workspace mount only; any additional host access is via explicit
-  bind mounts (`yolo --mount-ro ...`, `yolo --add-dir ...`).
+- Provide a safe default workflow: writable mounts are the workspace plus tool state/cache mounts; any additional
+  project host access is via explicit bind mounts (`yolo --mount-ro ...`, `yolo --add-dir ...`).
 - Use a high-quality devcontainer base image by default, but keep it a “two-way door” (easy to swap).
 - Support multiple container engines via `AIRLOCK_ENGINE` (default `podman`; also `docker`, `nerdctl`).
 - Make first-run “just work” without env vars:
-  - Use the host `~/.codex/` for Codex config/auth by default (opt in to stricter Airlock-managed state).
+  - Use the host `~/.codex/` for Codex config/auth by default.
+  - Use host caches under `~/.airlock/cache/` to keep builds snappy across sessions.
 
 ## Non-goals (v0.1)
 
@@ -36,42 +37,43 @@ ephemeral containers.
 
 ## Phase 0 — Prereqs and Baseline Validation
 
-This phase is mostly “host setup” and can be treated as **optional hardening**. Airlock is designed to run
-without special mounts by default, but hardened mounts are recommended for a stronger boundary.
+This phase is mostly “host setup”. Airlock is designed to run without special project mounts by default, but
+usage guidance should be explicit about what to mount (and what not to).
 
 1. Confirm environment assumptions:
    - A Linux environment with a working container engine.
-2. Optional host hardening (documented example: `docs/WSL_HARDENING.md`):
-   - Disable broad, automatic host drive mounts.
-   - Mount only the narrow inputs directory into your Linux environment (not “your whole home”).
-3. Quality gates (minimum):
+2. Quality gates (minimum):
    - `yolo` launches and shows only explicit mounts.
    - `${AIRLOCK_ENGINE:-podman} info` works from the host shell.
+3. Documentation:
+   - Add a short “dos and don’ts” guide for daily usage (secrets, mounts, networking, engine socket).
 
 Definition of done:
-- Airlock runs end-to-end; hardening is documented and can be applied when desired.
+
+- Airlock runs end-to-end; safety guidance is documented and can be applied when desired.
 
 ## Phase 1 — Repo Scaffold
 
 1. Initialize repository layout:
-   - `docs/` for runbook + security notes.
+   - `docs/` for a getting started guide + security notes.
    - `scripts/` for helper installers.
    - `stow/airlock/` for everything installable into `$HOME`.
 2. Add baseline docs:
    - `README.md` with quickstart and threat model summary.
-   - `docs/RUNBOOK.md`, `docs/WSL_HARDENING.md` (optional host hardening example), `docs/THREAT_MODEL.md`.
+   - `docs/getting-started.md`, `docs/threat-model.md`.
 3. Quality gates:
    - All commands in docs are copy/pasteable and labelled “required” vs “example”.
    - Directory tree matches the repo design in the spec.
 
 Definition of done:
+
 - A new contributor can understand the workflow and where files live.
 
 ## Phase 2 — Stow Package (Installable Assets)
 
 1. Implement stow package contents under `stow/airlock/`:
    - `bin/airlock-build`, `bin/airlock-doctor`, `bin/yolo`
-   - `~/.airlock/policy/` templates: `codex.config.toml`, `AGENTS.md`, minimal `zshrc`
+   - `~/.airlock/config/` templates: minimal `zshrc`
    - `~/.airlock/image/` templates: `agent.Dockerfile`, `entrypoint.sh`
 2. Add `scripts/install.sh` and `scripts/uninstall.sh` wrappers for stow.
 3. Quality gates:
@@ -80,6 +82,7 @@ Definition of done:
    - Unit tests pass without a running container engine (`./scripts/test-unit.sh`).
 
 Definition of done:
+
 - A user can install/uninstall cleanly with Stow (or via `scripts/install.sh`).
 
 ## Phase 3 — Agent Image (Devcontainer Base + Two‑Way Door)
@@ -101,19 +104,18 @@ Definition of done:
    - Container boots into zsh and `codex --version` works.
 
 Definition of done:
+
 - Image builds reproducibly and is easy to swap without code changes.
 
-## Phase 4 — Launcher (`yolo`) + Policy Boundaries
+## Phase 4 — Launcher (`yolo`) + Mount Boundaries
 
 1. Implement `yolo` to enforce invariants:
    - The workspace mount is RW and is the git repo root when inside a repo (so `.git/` is available from subdirs).
    - Default working directory is a canonical `/host<host-path>` so tools like Codex don’t conflate different repos.
    - No implicit “extra” mounts. Additional host access is explicit:
      - Read-only inputs: `yolo --mount-ro <DIR> -- ...` (mounted at `/host<abs>`).
-     - Read-write outbox: `yolo --add-dir <DIR> -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`).
+     - Read-write dirs: `yolo --add-dir <DIR> -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`).
    - Default Codex state is host `~/.codex/` (rw) so auth/config “just works”.
-     - Opt-in strict mode: `AIRLOCK_CODEX_HOME_MODE=airlock` persists state under `~/.airlock/codex-state` and
-       mounts policy `config.toml` read-only into `CODEX_HOME`.
    - Default network = bridge; `AIRLOCK_NETWORK=host` is opt-in.
 2. Guardrails:
    - Create host directories up front to avoid root-owned folders.
@@ -126,22 +128,23 @@ Definition of done:
    - Smoke test can run without the agent: `yolo -- bash -lc '...'`.
 
 Definition of done:
+
 - The “data diode” behavior is real in practice: inputs can be mounted RO; outputs can be mounted RW; nothing is implicit.
 
-## Phase 5 — Runbook + Tutorial (Step-by-Step)
+## Phase 5 — Getting Started + Tutorial (Step-by-Step)
 
-1. Write `docs/RUNBOOK.md` as the canonical tutorial:
-   - Host hardening notes (optional), Stow install, image build, doctor checks, daily workflow, promotion flow.
+1. Write `docs/getting-started.md` as the canonical tutorial:
+   - Install, image build, doctor checks, daily workflow, promotion flow.
    - Dogfooding options:
      - submodule in dotfiles (`vendor/airlock`) + stow from there
      - vendoring the stow package directly
-2. Write `docs/WSL_HARDENING.md` with exact file snippets for:
-   - host-specific configuration and recovery steps (example platform: WSL).
+2. Include safety notes in the guide (short, actionable, and opt-in).
 3. Quality gates:
-   - A fresh user can follow the runbook end-to-end without guessing.
+   - The guide is copy/pasteable and matches the system smoke test assertions.
    - All paths are parameterized (no hard-coded usernames).
 
 Definition of done:
+
 - Documentation is sufficient to reproduce the setup on a new machine.
 
 ## Phase 6 — Tests and Quality Gates (Lint / Unit / System)
@@ -166,6 +169,7 @@ Definition of done:
    - CI passes for lint + unit; system smoke passes in at least one engine environment.
 
 Definition of done:
+
 - Regressions in scripts/config/stow/container plumbing are caught before merge.
 
 ## Phase 7 — Dogfood in Your Dotfiles Repo
@@ -177,6 +181,7 @@ Definition of done:
    - Iterative updates are painless (pull submodule → restow → rebuild if needed).
 
 Definition of done:
+
 - You can use Airlock daily from your dotfiles workflow without manual hacks.
 
 ## Phase 8 — Release + Maintenance
@@ -187,11 +192,12 @@ Definition of done:
    - How to pin Codex CLI version (`AIRLOCK_CODEX_VERSION`).
 
 Definition of done:
+
 - A stable “starter release” exists with a working tutorial and predictable upgrades.
 
 ## Errata / Addendum Checklist for Spec v2.1
 
-Create `docs/SPEC_v2.1_ADDENDUM.md` capturing at least:
+Create `docs/spec-v2-1-addendum.md` capturing at least:
 
 - Devcontainers base as default (`mcr.microsoft.com/devcontainers/*`) instead of raw `node:*`.
 - Portable UID/GID mapping via `AIRLOCK_UID`/`AIRLOCK_GID` + entrypoint.
@@ -203,9 +209,9 @@ Create `docs/SPEC_v2.1_ADDENDUM.md` capturing at least:
 ## Overall Definition of Done (Project)
 
 - `stow -d <repo>/stow -t ~ airlock` installs: `yolo`, `airlock-build`, `airlock-doctor`, and
-  `~/.airlock/{policy,image}` templates.
+  `~/.airlock/{config,image}` templates.
 - `airlock-build` produces a runnable image (default base + overrideable base).
 - `yolo` launches a container with a writable workspace and no implicit extra mounts; RO/RW behavior is defined by flags.
 - `airlock-doctor` passes on a standard Linux + container engine setup.
 - `./scripts/test.sh` provides lint + unit + smoke coverage for stow/image/yolo mechanics.
-- Docs in `docs/RUNBOOK.md` reproduce the setup end-to-end.
+- Docs in `docs/getting-started.md` reproduce the setup end-to-end.

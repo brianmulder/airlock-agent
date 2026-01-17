@@ -1,11 +1,12 @@
-You:
-Below is a comprehensive technical specification for your **Secure AI Development Environment ("The Airlock")**. 
+# Technical Specification: "The Airlock" Architecture
+
+> Historical ChatGPT transcript kept for context. This file is not maintained; see `docs/getting-started.md` for current usage.
+
+Below is a comprehensive technical specification for your **Secure AI Development Environment ("The Airlock")**.
 
 This document outlines the architecture, configuration, and operational scripts required to implement a "Data Diode" workflow using WSL and Docker.
 
 ---
-
-# Technical Specification: "The Airlock" Architecture
 
 ## 1. Executive Summary
 
@@ -220,23 +221,20 @@ docker run -it --rm \
 * **Active Project Folder:** The directory you launch `yolo` from is mounted Read-Write. The AI *can* delete files here.
 * *Mitigation:* This folder is on WSL. **Git** is the safety net. Always commit before launching the agent.
 
-
 * **Drafts Folder:** The AI can write to `~/outbox/drafts`.
 * *Mitigation:* This is a "quarantine" zone. You must manually review and move files from here to your permanent storage.
-
-
 
 ### Known Limitations
 
 1. **IO Performance:** Files in `/work` (WSL native) are fast. Files in `/context` (Dropbox mount) will be slower due to the 9P protocol bridge.
 2. **Global NPM/Pip:** If the agent installs *global* packages (`npm -g`), they vanish on exit. This is a feature, not a bug. Project dependencies (`package.json`) persist.
 
-_ _ _
+---
 
 please review for soundness, validity, accuracy, precision, necessity, and sufficiency?
 my intent is to use this as the next step in my ai agent assisted dev workflow on my windows device with WSL.
 
-(not a hill to die on at this stage, but a note on where we're reinventing the wheel will be appreciated, without getting into analysis paralysis or tool acquisition syndrome) 
+(not a hill to die on at this stage, but a note on where we're reinventing the wheel will be appreciated, without getting into analysis paralysis or tool acquisition syndrome)
 
 ChatGPT:
 [Silence]
@@ -463,7 +461,7 @@ If you want, I can also give you a tiny “self-test checklist” (commands you 
 You:
 while you were reviewing we made some further edits, finished prior to you feedback.
 
-_ _ _
+---
 Here is the comprehensive Technical Specification for **"The Airlock" Architecture**.
 
 This document defines a compartmentalized development environment designed to balance **Agent Autonomy** (unrestricted execution) with **System Security** (host isolation) and **Workflow Continuity** (Neovim/Git integration).
@@ -741,7 +739,7 @@ We enable parallel agent workflows without complex Git Worktrees by utilizing th
 | **Zettelkasten** | **Read Only** | Agent can read context but cannot corrupt history. |
 | **Drafts Folder** | **Read Write** | Designated "drop zone" for agent artifacts. |
 | **Project Source** | **Read Write** | Agent has full control. **Mitigation:** Git (Reset/Revert). |
-_ _ _
+---
 
 please re-review in full?
 
@@ -1044,15 +1042,14 @@ graph TD
     NoMount[❌ No automatic /mnt/c mounts]
   end
 
-  subgraph Docker_Agent [Layer 2: Ephemeral Agent Container]
-    Agent[Codex CLI]
-    Runtime[Node / Python toolchain]
-    Agent -- RW --> Repo
-    Agent -- RO --> SafeHaven
-    Agent -- RW --> Outbox
-    Agent -- RW --> CodexState[~/.airlock/codex-state]
-    Agent -- RW --> Cache[~/.airlock/cache]
-  end
+	  subgraph Docker_Agent [Layer 2: Ephemeral Agent Container]
+	    Agent[Codex CLI]
+	    Runtime[Node / Python toolchain]
+	    Agent -- RW --> Repo
+	    Agent -- RO --> SafeHaven
+	    Agent -- RW --> Outbox
+	    Agent -- RW --> Cache[~/.airlock/cache]
+	  end
 
   Dropbox <==> SafeHaven
   CDrive --x NoMount
@@ -1114,14 +1111,13 @@ This is the “make the diode real” part.
 
 ```text
 ~/dropbox/fred/                 # Dropbox-backed, context only (RO to agent)
+~/.codex/                       # Codex auth/config/history (RW to agent via yolo mount)
 ~/.airlock/
-  codex-state/                  # agent auth/history/state (RW to agent)
   cache/                        # npm/pnpm/pip caches (RW to agent)
   outbox/
     drafts/                     # agent writes artifacts here (RW to agent)
   policy/
-    codex.config.toml           # agent policy (RO to agent)
-    AGENTS.md                   # optional: global agent instructions (RO to agent)
+    zshrc                       # minimal shell init (RO to agent)
 ```
 
 Why drafts are not in Dropbox: avoids RO-bypass via same-filesystem writable paths and prevents Dropbox from syncing unreviewed artifacts.
@@ -1170,48 +1166,15 @@ docker build -t airlock-agent -f ~/agent.Dockerfile .
 
 ---
 
-## 6. Codex Policy (Autonomy Inside the Container)
+## 6. Codex Configuration
 
-Codex reads config from `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). citeturn1view0turn1view1\
-Key knobs include `approval_policy` and `sandbox_mode`. citeturn1view0turn5view0turn1view6
+Codex reads config from `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). citeturn1view0turn1view1
 
-### 6.1 Airlock policy config (host-side, mounted RO)
+Airlock does not ship or mount a separate read-only Codex policy file. Instead, `yolo` mounts your host
+`~/.codex/` into the container (rw) and relies on container + mount boundaries for isolation.
 
-File: `~/.airlock/policy/codex.config.toml`
-
-```toml
-# Airlock "Yolo in container" defaults
-model = "gpt-5.2-codex"
-
-# No human-in-the-loop prompts INSIDE the container (the mounts are the guardrail).
-approval_policy = "never"
-
-# In containerized environments, Codex’s own sandbox may not function if Landlock/seccomp
-# aren’t available; in that case, rely on Docker isolation and use full access. citeturn6search0
-sandbox_mode = "danger-full-access"
-
-# Optional: keep update checks on
-check_for_update_on_startup = true
-
-# Optional: store credentials in CODEX_HOME (works well for container state persistence)
-cli_auth_credentials_store = "file"
-```
-
-### 6.2 Optional: global AGENTS.md guidance (host-side, mounted RO)
-
-Codex reads `AGENTS.md` from `CODEX_HOME` and from project directories, building an instruction chain. citeturn4view0
-
-File: `~/.airlock/policy/AGENTS.md`
-
-```markdown
-# Airlock Working Agreements
-
-- You may edit files only under /work.
-- You may write artifacts to /drafts.
-- Never request access to Windows paths or /mnt.
-- Prefer small diffs; run the repo test/lint commands when reasonable.
-- When unsure, produce a patch in /drafts instead of changing tracked files.
-```
+If you want global agent instructions, put them in `~/.codex/AGENTS.md` (Codex also supports project-local
+`AGENTS.md`).
 
 ---
 
@@ -1231,14 +1194,8 @@ SAFE_HAVEN="$HOME/dropbox/fred"
 
 # --- Airlock persistent hot-zone state (WSL-native, RW to agent) ---
 AIRLOCK_HOME="$HOME/.airlock"
-CODEX_STATE="$AIRLOCK_HOME/codex-state"
 CACHE_HOME="$AIRLOCK_HOME/cache"
 DRAFTS_DIR="$AIRLOCK_HOME/outbox/drafts"
-
-# --- Policy (RO to agent) ---
-POLICY_DIR="$AIRLOCK_HOME/policy"
-CODEX_CONFIG="$POLICY_DIR/codex.config.toml"
-AGENTS_MD="$POLICY_DIR/AGENTS.md"
 
 # --- Workspace ---
 WORK_DIR="$(pwd)"
@@ -1248,7 +1205,7 @@ USER_ID="$(id -u)"
 GROUP_ID="$(id -g)"
 
 # --- Prep dirs so Docker doesn't create them as root ---
-mkdir -p "$CODEX_STATE" "$CACHE_HOME" "$DRAFTS_DIR" "$POLICY_DIR"
+mkdir -p "$CACHE_HOME" "$DRAFTS_DIR"
 
 # --- Network: default is bridge; enable host only when explicitly requested ---
 NETWORK_ARGS=()
@@ -1261,7 +1218,7 @@ echo "--- 🚀 LAUNCHING AIRLOCK AGENT ---"
 echo "📂 Workspace: $WORK_DIR"
 echo "📚 Context (RO): $SAFE_HAVEN  -> /context"
 echo "📤 Drafts (RW):  $DRAFTS_DIR  -> /drafts"
-echo "🧠 Codex state:  $CODEX_STATE -> \$CODEX_HOME"
+echo "🧠 Codex state:  $HOME/.codex -> \$CODEX_HOME"
 echo "---------------------------------"
 
 docker run -it --rm \
@@ -1277,14 +1234,11 @@ docker run -it --rm \
   -v "$SAFE_HAVEN":/context:ro \
   -v "$DRAFTS_DIR":/drafts:rw \
   \
-  -v "$CODEX_STATE":/home/node/.codex:rw \
-  -v "$CODEX_CONFIG":/home/node/.codex/config.toml:ro \
+  -v "$HOME/.codex":/home/node/.codex:rw \
   \
   -v "$CACHE_HOME":/home/node/.cache:rw \
   -v "$CACHE_HOME/npm":/home/node/.npm:rw \
   -v "$CACHE_HOME/pnpm":/home/node/.local/share/pnpm:rw \
-  \
-  -v "$AGENTS_MD":/home/node/.codex/AGENTS.md:ro \
   \
   "$IMAGE"
 ```
@@ -1340,7 +1294,8 @@ cp ~/.airlock/outbox/drafts/thing.patch ~/dropbox/fred/outbox/reviewed/
 
 ### 9.1 What persists
 
-- `~/.airlock/codex-state` holds Codex state such as config/auth/history depending on configuration; Codex documents that its local state lives under `CODEX_HOME` (default `~/.codex`). citeturn1view1turn1view0
+- `~/.codex` holds Codex state such as config/auth/history; Codex documents that its local state lives under
+  `CODEX_HOME` (default `~/.codex`). citeturn1view1turn1view0
 - `~/.airlock/cache` persists package-manager caches for speed.
 
 ### 9.2 Performance expectations
@@ -1471,14 +1426,12 @@ I’m going to give you:
       │  ├─ yolo
       │  ├─ airlock-build
       │  └─ airlock-doctor
-      └─ .airlock/
-         ├─ policy/
-         │  ├─ codex.config.toml
-         │  ├─ AGENTS.md
-         │  └─ zshrc
-         └─ image/
-            ├─ agent.Dockerfile
-            └─ entrypoint.sh
+	      └─ .airlock/
+	         ├─ policy/
+	         │  └─ zshrc
+	         └─ image/
+	            ├─ agent.Dockerfile
+	            └─ entrypoint.sh
 ```
 
 ### Why this shape works with Stow
@@ -1715,14 +1668,11 @@ AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/dropbox/fred}"
 
 # Hot-zone runtime state (WSL ext4, RW)
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
-CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
 CACHE_DIR="${CACHE_DIR:-$AIRLOCK_HOME/cache}"
 DRAFTS_DIR="${DRAFTS_DIR:-$AIRLOCK_HOME/outbox/drafts}"
 POLICY_DIR="${POLICY_DIR:-$AIRLOCK_HOME/policy}"
 
 # Policy files (stowed)
-CODEX_CONFIG="${CODEX_CONFIG:-$POLICY_DIR/codex.config.toml}"
-AGENTS_MD="${AGENTS_MD:-$POLICY_DIR/AGENTS.md}"
 AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$POLICY_DIR/zshrc}"
 
 # Workspace (must be a project repo in WSL ext4)
@@ -1733,7 +1683,7 @@ AIRLOCK_UID="$(id -u)"
 AIRLOCK_GID="$(id -g)"
 
 # Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
-mkdir -p "$CODEX_STATE_DIR" "$CACHE_DIR" "$DRAFTS_DIR"
+mkdir -p "$CACHE_DIR" "$DRAFTS_DIR"
 
 # Guardrail: drafts must not live under context (prevents RO-bypass footguns)
 case "$DRAFTS_DIR" in
@@ -1770,9 +1720,7 @@ docker run -it --rm \
   -w /work \
   -v "$AIRLOCK_CONTEXT_DIR":/context:ro \
   -v "$DRAFTS_DIR":/drafts:rw \
-  -v "$CODEX_STATE_DIR":/home/airlock/.codex:rw \
-  -v "$CODEX_CONFIG":/home/airlock/.codex/config.toml:ro \
-  -v "$AGENTS_MD":/home/airlock/.codex/AGENTS.md:ro \
+  -v "$HOME/.codex":/home/airlock/.codex:rw \
   -v "$CACHE_DIR":/home/airlock/.cache:rw \
   -v "$CACHE_DIR/npm":/home/airlock/.npm:rw \
   -v "$CACHE_DIR/pnpm":/home/airlock/.local/share/pnpm:rw \
@@ -1798,7 +1746,6 @@ AIRLOCK_CONTEXT_DIR="${AIRLOCK_CONTEXT_DIR:-$HOME/dropbox/fred}"
 
 req() { [[ -e "$1" ]] || fail "missing: $1"; }
 
-req "$HOME/.airlock/policy/codex.config.toml"
 req "$HOME/.airlock/image/agent.Dockerfile"
 req "$HOME/bin/yolo"
 req "$HOME/bin/airlock-build"
@@ -1901,51 +1848,6 @@ fi
 
 # Drop privileges
 exec gosu "$RUN_AS_USER" "$@"
-```
-
----
-
-## 4.6 `stow/airlock/.airlock/policy/codex.config.toml`
-
-Uses official keys + sane defaults.
-
-- Config lives in `~/.codex/config.toml` (or under `CODEX_HOME`). citeturn3view1turn3view2
-- `approval_policy` + `sandbox_mode` are first-class keys. citeturn3view0turn3view1
-- Default/recommended model in Codex configs is `gpt-5.2-codex`. citeturn3view3turn2view0
-
-```toml
-# Airlock Codex config (mounted read-only into the container)
-
-model = "gpt-5.2-codex"
-review_model = "gpt-5.2-codex"
-
-# No approvals inside the container (mount policy is the guardrail)
-approval_policy = "never"
-
-# Full autonomy inside container; Docker/mounts provide the real isolation boundary
-sandbox_mode = "danger-full-access"
-
-cli_auth_credentials_store = "file"
-check_for_update_on_startup = true
-
-[features]
-web_search_request = false
-```
-
----
-
-## 4.7 `stow/airlock/.airlock/policy/AGENTS.md`
-
-Codex supports layered instructions via `AGENTS.md`. citeturn1search10turn3view2
-
-```markdown
-# Airlock Agent Rules
-
-- Workspace is /work. Treat it as the only editable source of truth.
-- Context is /context and is read-only. Never attempt to modify it.
-- Draft outputs go to /drafts.
-- Prefer small diffs. Run tests/lint when reasonable.
-- If you’re unsure, write a patch to /drafts rather than editing tracked files.
 ```
 
 ---
@@ -2614,4 +2516,3 @@ YOLO flag is documented. citeturn8view0turn11search13
 - Keep `yolo` as the only “hard” UX surface, and treat agents as plugins. That’s how you avoid locking yourself into any vendor while still shipping something usable.
 
 If you want, next iteration can add a single optional “agent adapter” interface (a tiny `bash` registry) so adding future tools (Cursor Agent, Aider, etc.) is a 20-line drop-in—not a refactor.
-

@@ -26,4 +26,8 @@ if [[ -S "$SOCK_PATH" ]]; then
   exec /usr/bin/podman --remote --url "unix://$SOCK_PATH" "$@"
 fi
 
+if [[ -n "${AIRLOCK_PODMAN_STORAGE_DRIVER:-}" ]]; then
+  exec /usr/bin/podman --storage-driver "$AIRLOCK_PODMAN_STORAGE_DRIVER" "$@"
+fi
+
 exec /usr/bin/podman "$@"

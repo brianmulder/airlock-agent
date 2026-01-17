@@ -7,19 +7,30 @@ Usage: yolo [options] [--] [command...]
 
 Launch an ephemeral container with explicit mounts:
   - /host<host-path>      (rw)  workspace mount (repo root when inside git)
-  - /home/airlock/.codex  (rw)  host ~/.codex (default) or Airlock-managed state (opt-in)
+  - /home/airlock/.codex  (rw)  host ~/.codex
+  - /home/airlock/.config/opencode (rw) host ~/.config/opencode
+  - /home/airlock/.local/share/opencode (rw) host ~/.local/share/opencode
+  - /home/airlock/.zshrc  (ro)  host ~/.airlock/config/zshrc
+  - /home/airlock/.cache  (rw)  host ~/.airlock/cache
+  - /home/airlock/.npm    (rw)  host ~/.airlock/cache/npm
+  - /home/airlock/.local/share/pnpm (rw) host ~/.airlock/cache/pnpm
 
 Examples:
   yolo
   yolo -- bash -lc 'id; mount | head'
   yolo -- codex --profile yolo
-  yolo --add-dir ~/tmp/outbox -- codex --profile yolo
+  yolo -- opencode
+  yolo --publish 1455:1455 -- opencode auth login
+  yolo --add-dir ~/tmp/airlock-writes -- codex --profile yolo
   yolo --mount-ro ~/tmp/inputs -- bash -lc 'ls -la /host$PWD'
 
 Options:
   --add-dir <DIR>     Bind-mount host DIR read-write at /host<abs>.
                       If the command is `codex`, forwards as `--add-dir /host<abs>`.
   --mount-ro <DIR>    Bind-mount host DIR read-only at /host<abs>.
+  --publish <SPEC>    Publish container port(s) to the host (passed to the engine as `-p SPEC`).
+                      Example: --publish 1455:1455 (needed for some OAuth callbacks on WSL/Windows).
+  --no-engine-socket  Disable mounting the host container engine socket.
   --name <NAME>       Container name override (default: airlock-<basename of $PWD>).
   --new               Start a new container if the default name is already running.
   -h, --help          Show this help.
@@ -29,13 +40,20 @@ Key env vars:
   AIRLOCK_IMAGE=airlock-agent:local     Image tag to run
   AIRLOCK_NETWORK=host                  Opt-in host networking (default: bridge)
   AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
-  AIRLOCK_CODEX_HOME_MODE=host|airlock  Use host ~/.codex (default) or persist under ~/.airlock with policy overrides
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
   AIRLOCK_TIMING=1                      Print coarse timing around engine run (also enables entrypoint timing)
   AIRLOCK_DRY_RUN=1                     Print the engine command and exit
+  AIRLOCK_CONFIG_DIR=...                Host Airlock config dir (default: ~/.airlock/config)
+  AIRLOCK_ZSHRC=...                     Host zshrc to mount (default: ~/.airlock/config/zshrc)
+  AIRLOCK_MOUNT_OPENCODE=0              Disable mounting host OpenCode state (default: enabled)
+  AIRLOCK_MOUNT_ENGINE_SOCKET=0         Disable mounting the host engine socket (default: enabled when available)
+  AIRLOCK_PODMAN_STORAGE_DRIVER=vfs     When using nested podman, force a storage driver (example: vfs)
   AIRLOCK_MOUNT_ROS=/a:/b               Extra read-only mounts (colon-separated host dirs)
   AIRLOCK_ADD_DIRS=/x:/y                Extra read-write mounts (colon-separated host dirs; forwarded to codex as --add-dir)
+  AIRLOCK_PUBLISH_PORTS=1455:1455       Extra published ports (comma-separated; passed as `-p SPEC`)
+  AIRLOCK_HOST_OPENCODE_CONFIG_DIR=...  Host OpenCode config dir (default: ~/.config/opencode)
+  AIRLOCK_HOST_OPENCODE_DATA_DIR=...    Host OpenCode data dir (default: ~/.local/share/opencode)
 USAGE
 }
 
@@ -48,6 +66,7 @@ esac
 
 ADD_DIR_HOSTS=()
 MOUNT_RO_HOSTS=()
+PUBLISH_PORT_SPECS=()
 YOLO_NEW=0
 YOLO_NAME_OVERRIDE=""
 while (( $# > 0 )); do
@@ -74,6 +93,15 @@ while (( $# > 0 )); do
       MOUNT_RO_HOSTS+=("${1#--mount-ro=}")
       shift
       ;;
+    --publish)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --publish requires a port spec (e.g., 1455:1455)" >&2; exit 1; }
+      PUBLISH_PORT_SPECS+=("$2")
+      shift 2
+      ;;
+    --publish=*)
+      PUBLISH_PORT_SPECS+=("${1#--publish=}")
+      shift
+      ;;
     --name)
       [[ -n "${2:-}" ]] || { echo "ERROR: --name requires a value" >&2; exit 1; }
       YOLO_NAME_OVERRIDE="$2"
@@ -81,6 +109,10 @@ while (( $# > 0 )); do
       ;;
     --name=*)
       YOLO_NAME_OVERRIDE="${1#--name=}"
+      shift
+      ;;
+    --no-engine-socket)
+      AIRLOCK_MOUNT_ENGINE_SOCKET=0
       shift
       ;;
     --new)
@@ -104,7 +136,6 @@ done
 
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
-AIRLOCK_CODEX_HOME_MODE="${AIRLOCK_CODEX_HOME_MODE:-host}"
 AIRLOCK_RUN_AS_HOST_USER="${AIRLOCK_RUN_AS_HOST_USER:-1}"
 
 ENGINE_NAME="$(basename "$AIRLOCK_ENGINE")"
@@ -119,13 +150,11 @@ engine_supports_keep_id_userns() {
 
 # Hot-zone runtime state (host-local, RW)
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
-CODEX_STATE_DIR="${CODEX_STATE_DIR:-$AIRLOCK_HOME/codex-state}"
 CACHE_DIR="${CACHE_DIR:-$AIRLOCK_HOME/cache}"
-POLICY_DIR="${POLICY_DIR:-$AIRLOCK_HOME/policy}"
+AIRLOCK_CONFIG_DIR="${AIRLOCK_CONFIG_DIR:-$AIRLOCK_HOME/config}"
 
-# Policy files (stowed)
-CODEX_CONFIG="${CODEX_CONFIG:-$POLICY_DIR/codex.config.toml}"
-AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$POLICY_DIR/zshrc}"
+# Config files (stowed)
+AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$AIRLOCK_CONFIG_DIR/zshrc}"
 
 # Workspace (bind-mounted to /host<abs>). If inside a git repo, mount the repo root so `.git/` is available.
 WORK_DIR="$(pwd)"
@@ -167,35 +196,14 @@ warn() { echo "WARN: $*" >&2; }
 
 req_file "$AIRLOCK_ZSHRC"
 
-CODEX_MOUNT_SRC=""
-CODEX_MOUNTS=()
-CODEX_HOME_LABEL=""
-HOST_CODEX_DIR=""
+HOST_CODEX_DIR="${AIRLOCK_HOST_CODEX_DIR:-$HOME/.codex}"
+mkdir -p "$HOST_CODEX_DIR"
+CODEX_MOUNT_SRC="$HOST_CODEX_DIR"
+CODEX_HOME_LABEL="$HOST_CODEX_DIR (rw)"
 
-case "$AIRLOCK_CODEX_HOME_MODE" in
-  airlock)
-    req_file "$CODEX_CONFIG"
-    CODEX_MOUNT_SRC="$CODEX_STATE_DIR"
-    host_cfg="$CODEX_CONFIG"
-    if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_cfg" == /host/* ]]; then
-      host_cfg="${host_cfg#/host}"
-    fi
-    CODEX_MOUNTS+=(
-      -v "$host_cfg":/home/airlock/.codex/config.toml:ro
-    )
-    CODEX_HOME_LABEL="$CODEX_STATE_DIR (policy overrides: ro)"
-    ;;
-  host)
-    HOST_CODEX_DIR="${AIRLOCK_HOST_CODEX_DIR:-$HOME/.codex}"
-    mkdir -p "$HOST_CODEX_DIR"
-    CODEX_MOUNT_SRC="$HOST_CODEX_DIR"
-    CODEX_HOME_LABEL="$HOST_CODEX_DIR (rw)"
-    ;;
-  *)
-    echo "ERROR: invalid AIRLOCK_CODEX_HOME_MODE: $AIRLOCK_CODEX_HOME_MODE (expected: airlock|host)" >&2
-    exit 1
-    ;;
-esac
+# OpenCode (host state mounted into container by default)
+HOST_OPENCODE_CONFIG_DIR="${AIRLOCK_HOST_OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+HOST_OPENCODE_DATA_DIR="${AIRLOCK_HOST_OPENCODE_DATA_DIR:-$HOME/.local/share/opencode}"
 
 hostify_mount_src() {
   local p="$1"
@@ -207,6 +215,8 @@ hostify_mount_src() {
 }
 
 HOST_CODEX_MOUNT_SRC="$(hostify_mount_src "$CODEX_MOUNT_SRC")"
+HOST_OPENCODE_CONFIG_MOUNT_SRC="$(hostify_mount_src "$HOST_OPENCODE_CONFIG_DIR")"
+HOST_OPENCODE_DATA_MOUNT_SRC="$(hostify_mount_src "$HOST_OPENCODE_DATA_DIR")"
 HOST_CACHE_DIR="$(hostify_mount_src "$CACHE_DIR")"
 HOST_CACHE_DIR_NPM="$(hostify_mount_src "$CACHE_DIR/npm")"
 HOST_CACHE_DIR_PNPM="$(hostify_mount_src "$CACHE_DIR/pnpm")"
@@ -215,10 +225,13 @@ HOST_AIRLOCK_ZSHRC="$(hostify_mount_src "$AIRLOCK_ZSHRC")"
 # Prepare runtime dirs (avoid Docker creating root-owned dirs on host)
 mkdir -p "$CODEX_MOUNT_SRC" "$CACHE_DIR" "$CACHE_DIR/npm" "$CACHE_DIR/pnpm"
 
+if [[ "${AIRLOCK_MOUNT_OPENCODE:-1}" != "0" ]]; then
+  mkdir -p "$HOST_OPENCODE_CONFIG_DIR" "$HOST_OPENCODE_DATA_DIR"
+fi
+
 # Guard rails: if your host Codex state is unreadable (often due to an accidental `sudo codex`),
 # yolo will run but Codex will fail. Warn early; fail only when actually running codex.
 check_host_codex_state() {
-  [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]] || return 0
   [[ -n "$HOST_CODEX_DIR" ]] || return 0
 
   if [[ ! -d "$HOST_CODEX_DIR" ]]; then
@@ -242,7 +255,6 @@ check_host_codex_state() {
 }
 
 check_host_codex_state_or_die_for_codex() {
-  [[ "$AIRLOCK_CODEX_HOME_MODE" == "host" ]] || return 0
   [[ -n "$HOST_CODEX_DIR" ]] || return 0
 
   local cfg="$HOST_CODEX_DIR/config.toml"
@@ -250,6 +262,44 @@ check_host_codex_state_or_die_for_codex() {
     echo "ERROR: host Codex config not readable: $cfg" >&2
     echo "Hint: this usually means Codex was run as root at least once." >&2
     echo "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_CODEX_DIR\"" >&2
+    exit 1
+  fi
+}
+
+# Guard rails: host OpenCode state can also become unreadable if files were created as root.
+check_host_opencode_state() {
+  [[ "${AIRLOCK_MOUNT_OPENCODE:-1}" != "0" ]] || return 0
+  [[ -n "$HOST_OPENCODE_DATA_DIR" ]] || return 0
+
+  if [[ ! -d "$HOST_OPENCODE_DATA_DIR" ]]; then
+    warn "host OpenCode data dir missing: $HOST_OPENCODE_DATA_DIR (unexpected; yolo should have created it)"
+    return 0
+  fi
+
+  if [[ ! -r "$HOST_OPENCODE_DATA_DIR" || ! -w "$HOST_OPENCODE_DATA_DIR" || ! -x "$HOST_OPENCODE_DATA_DIR" ]]; then
+    warn "host OpenCode data dir not accessible (need r/w/x): $HOST_OPENCODE_DATA_DIR"
+    warn "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_OPENCODE_DATA_DIR\""
+    return 0
+  fi
+
+  local auth="$HOST_OPENCODE_DATA_DIR/auth.json"
+  if [[ -e "$auth" && ! -r "$auth" ]]; then
+    warn "host OpenCode auth not readable: $auth"
+    warn "This usually means OpenCode was run as root at least once."
+    warn "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_OPENCODE_DATA_DIR\""
+    return 0
+  fi
+}
+
+check_host_opencode_state_or_die_for_opencode() {
+  [[ "${AIRLOCK_MOUNT_OPENCODE:-1}" != "0" ]] || return 0
+  [[ -n "$HOST_OPENCODE_DATA_DIR" ]] || return 0
+
+  local auth="$HOST_OPENCODE_DATA_DIR/auth.json"
+  if [[ -e "$auth" && ! -r "$auth" ]]; then
+    echo "ERROR: host OpenCode auth not readable: $auth" >&2
+    echo "Hint: this usually means OpenCode was run as root at least once." >&2
+    echo "Fix: sudo chown -R \"$AIRLOCK_USER_NAME\":\"$AIRLOCK_USER_NAME\" \"$HOST_OPENCODE_DATA_DIR\"" >&2
     exit 1
   fi
 }
@@ -318,13 +368,30 @@ split_colon_list() {
   out=("${cleaned[@]}")
 }
 
+split_comma_list() {
+  local raw="$1"
+  local -n out_list="$2"
+  local entry
+  IFS=',' read -r -a out_list <<<"$raw"
+  # Drop empty entries (e.g., leading/trailing comma)
+  local cleaned=()
+  for entry in "${out_list[@]}"; do
+    [[ -n "$entry" ]] && cleaned+=("$entry")
+  done
+  out_list=("${cleaned[@]}")
+}
+
 ENV_ADD_DIR_HOSTS=()
 ENV_MOUNT_RO_HOSTS=()
+ENV_PUBLISH_PORT_SPECS=()
 if [[ -n "${AIRLOCK_ADD_DIRS:-}" ]]; then
   split_colon_list "$AIRLOCK_ADD_DIRS" ENV_ADD_DIR_HOSTS
 fi
 if [[ -n "${AIRLOCK_MOUNT_ROS:-}" ]]; then
   split_colon_list "$AIRLOCK_MOUNT_ROS" ENV_MOUNT_RO_HOSTS
+fi
+if [[ -n "${AIRLOCK_PUBLISH_PORTS:-}" ]]; then
+  split_comma_list "$AIRLOCK_PUBLISH_PORTS" ENV_PUBLISH_PORT_SPECS
 fi
 
 extra_mounts=()
@@ -351,9 +418,21 @@ for d in "${ENV_ADD_DIR_HOSTS[@]}" "${ADD_DIR_HOSTS[@]}"; do
   codex_add_dirs+=(--add-dir "$target")
 done
 
+PUBLISH_PORT_ARGS=()
+PUBLISH_PORTS_ALL=("${ENV_PUBLISH_PORT_SPECS[@]}" "${PUBLISH_PORT_SPECS[@]}")
+for spec in "${PUBLISH_PORTS_ALL[@]}"; do
+  [[ -n "$spec" ]] || continue
+  PUBLISH_PORT_ARGS+=(-p "$spec")
+done
+
 is_codex_cmd() {
   local cmd="${1:-}"
   [[ "$cmd" == "codex" || "$cmd" == */codex ]]
+}
+
+is_opencode_cmd() {
+  local cmd="${1:-}"
+  [[ "$cmd" == "opencode" || "$cmd" == */opencode ]]
 }
 
 yolo_cmd=("$@")
@@ -362,13 +441,18 @@ if (( ${#yolo_cmd[@]} > 0 )) && is_codex_cmd "${yolo_cmd[0]}"; then
 else
   check_host_codex_state
 fi
+if (( ${#yolo_cmd[@]} > 0 )) && is_opencode_cmd "${yolo_cmd[0]}"; then
+  check_host_opencode_state_or_die_for_opencode
+else
+  check_host_opencode_state
+fi
 if (( ${#yolo_cmd[@]} > 0 )) && is_codex_cmd "${yolo_cmd[0]}" && (( ${#codex_add_dirs[@]} > 0 )); then
   yolo_cmd=("${yolo_cmd[0]}" "${codex_add_dirs[@]}" "${yolo_cmd[@]:1}")
 fi
 
-has_extra_mounts=0
-if [[ -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUNT_ROS:-}" || "${#ADD_DIR_HOSTS[@]}" -gt 0 || "${#MOUNT_RO_HOSTS[@]}" -gt 0 ]]; then
-  has_extra_mounts=1
+has_extra_config=0
+if [[ -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUNT_ROS:-}" || -n "${AIRLOCK_PUBLISH_PORTS:-}" || "${#ADD_DIR_HOSTS[@]}" -gt 0 || "${#MOUNT_RO_HOSTS[@]}" -gt 0 || "${#PUBLISH_PORT_SPECS[@]}" -gt 0 ]]; then
+  has_extra_config=1
 fi
 
 print_summary() {
@@ -379,8 +463,15 @@ print_summary() {
   echo "Workspace:  $WORK_DIR (mounted: $HOST_WORK_MOUNT_SRC) -> $CANON_MOUNT_TARGET (rw)"
   echo "Workdir:    $CANON_CONTAINER_WD"
   echo "CODEX_HOME: /home/airlock/.codex <= $CODEX_HOME_LABEL"
-  if [[ "$has_extra_mounts" == "1" ]]; then
-    echo "Extra dirs: (see mounts below)"
+  if [[ "${AIRLOCK_MOUNT_OPENCODE:-1}" != "0" ]]; then
+    echo "OpenCode:   /home/airlock/.config/opencode <= $HOST_OPENCODE_CONFIG_DIR (rw)"
+    echo "            /home/airlock/.local/share/opencode <= $HOST_OPENCODE_DATA_DIR (rw)"
+  fi
+  if [[ "${#PUBLISH_PORT_ARGS[@]}" -gt 0 ]]; then
+    echo "Ports:      ${PUBLISH_PORTS_ALL[*]}"
+  fi
+  if [[ "$has_extra_config" == "1" ]]; then
+    echo "Extras:     (see mounts/ports in dry-run or engine output)"
   fi
   echo "Network:    ${AIRLOCK_NETWORK:-bridge}"
   echo "Name:       $name"
@@ -435,8 +526,8 @@ if [[ "${AIRLOCK_DRY_RUN:-0}" != "1" ]]; then
         AIRLOCK_CONTAINER_NAME="$(new_container_name "$AIRLOCK_CONTAINER_NAME")"
         echo "INFO: name already in use; starting new container: $AIRLOCK_CONTAINER_NAME" >&2
       else
-        if [[ "$has_extra_mounts" == "1" ]]; then
-          echo "ERROR: container is already running and cannot be modified with new mounts." >&2
+        if [[ "$has_extra_config" == "1" ]]; then
+          echo "ERROR: container is already running and cannot be modified with new mounts/ports." >&2
           echo "Hint: use --new (or set AIRLOCK_CONTAINER_NAME=...) to start a second container." >&2
           exit 1
         fi
@@ -461,6 +552,7 @@ cmd=(
   "${TTY_ARGS[@]}"
   "${RM_ARGS[@]}"
   "${NETWORK_ARGS[@]}"
+  "${PUBLISH_PORT_ARGS[@]}"
   "${USERNS_ARGS[@]}"
   "${USER_ARGS[@]}"
   --name "$AIRLOCK_CONTAINER_NAME"
@@ -473,14 +565,24 @@ cmd=(
   -w "$CANON_CONTAINER_WD"
   -v "$HOST_WORK_MOUNT_SRC":"$CANON_MOUNT_TARGET":rw
   -v "$HOST_CODEX_MOUNT_SRC":/home/airlock/.codex:rw
-  "${CODEX_MOUNTS[@]}"
   -v "$HOST_CACHE_DIR":/home/airlock/.cache:rw
   -v "$HOST_CACHE_DIR_NPM":/home/airlock/.npm:rw
   -v "$HOST_CACHE_DIR_PNPM":/home/airlock/.local/share/pnpm:rw
   -v "$HOST_AIRLOCK_ZSHRC":/home/airlock/.zshrc:ro
 )
 
+if [[ -n "${AIRLOCK_PODMAN_STORAGE_DRIVER:-}" ]]; then
+  cmd+=(-e "AIRLOCK_PODMAN_STORAGE_DRIVER=$AIRLOCK_PODMAN_STORAGE_DRIVER")
+fi
+
 cmd+=(-e "AIRLOCK_GIT_SAFE_DIRS=$CANON_MOUNT_TARGET")
+
+if [[ "${AIRLOCK_MOUNT_OPENCODE:-1}" != "0" ]]; then
+  cmd+=(
+    -v "$HOST_OPENCODE_CONFIG_MOUNT_SRC":/home/airlock/.config/opencode:rw
+    -v "$HOST_OPENCODE_DATA_MOUNT_SRC":/home/airlock/.local/share/opencode:rw
+  )
+fi
 
 # Engine socket passthrough (to allow building/running containers from within yolo).
 ENGINE_SOCKET_MOUNTS=()

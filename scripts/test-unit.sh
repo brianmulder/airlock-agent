@@ -18,25 +18,23 @@ mkdir -p "$home_dir" "$ro_dir" "$rw_dir"
 
 export HOME="$home_dir"
 
-mkdir -p "$HOME/.airlock/policy" "$HOME/.airlock/image"
-printf '%s\n' "# test" >"$HOME/.airlock/policy/codex.config.toml"
-printf '%s\n' "# test" >"$HOME/.airlock/policy/zshrc"
+mkdir -p "$HOME/.airlock/config" "$HOME/.airlock/image"
+printf '%s\n' "# test" >"$HOME/.airlock/config/zshrc"
 printf '%s\n' "hello" >"$ro_dir/hello.txt"
 
 ok "unit setup"
 
-## config sanity: codex.config.toml is valid TOML (use repo venv, no system python changes)
-./scripts/venv.sh
-PYTHON="${AIRLOCK_VENV_DIR:-$REPO_ROOT/.venv}/bin/python"
-
-"$PYTHON" - <<'PY'
-import pathlib
-import tomllib
-
-path = pathlib.Path("stow/airlock/.airlock/policy/codex.config.toml")
-config = tomllib.loads(path.read_text(encoding="utf-8"))
-PY
-ok "codex.config.toml parses (tomllib): ok"
+## agent image: editor support for $EDITOR
+grep -q -- 'ARG EDITOR_PKG=vim-tiny' stow/airlock/.airlock/image/agent.Dockerfile || \
+  fail "expected agent.Dockerfile to default EDITOR_PKG to vim-tiny"
+expected_editor_expr="\${EDITOR_PKG}"
+grep -Fq -- "$expected_editor_expr" stow/airlock/.airlock/image/agent.Dockerfile || \
+  fail "expected agent.Dockerfile to install editor from EDITOR_PKG build arg"
+grep -q -- 'EDITOR=vi' stow/airlock/.airlock/image/agent.Dockerfile || \
+  fail "expected agent.Dockerfile to set default EDITOR=vi"
+grep -q -- 'VISUAL=vi' stow/airlock/.airlock/image/agent.Dockerfile || \
+  fail "expected agent.Dockerfile to set default VISUAL=vi"
+ok "agent image editor defaults: ok"
 
 ## yolo dry-run defaults (no host networking; rm enabled)
 out="$(
@@ -58,10 +56,49 @@ if printf '%s\n' "$out" | grep -q -- '--network host'; then
   fail "expected yolo to NOT use host networking by default"
 fi
 printf '%s\n' "$out" | grep -q -- "-v $HOME/.codex:/home/airlock/.codex:rw" || fail "expected yolo to mount host ~/.codex by default"
+printf '%s\n' "$out" | grep -q -- "-v $HOME/.config/opencode:/home/airlock/.config/opencode:rw" || \
+  fail "expected yolo to mount host ~/.config/opencode by default"
+printf '%s\n' "$out" | grep -q -- "-v $HOME/.local/share/opencode:/home/airlock/.local/share/opencode:rw" || \
+  fail "expected yolo to mount host ~/.local/share/opencode by default"
 if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro'; then
-  fail "expected yolo to NOT mount policy config.toml by default"
+  fail "expected yolo to NOT mount codex config.toml by default"
 fi
 ok "yolo dry-run defaults: ok"
+
+## yolo: passes AIRLOCK_PODMAN_STORAGE_DRIVER through to the container
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_PODMAN_STORAGE_DRIVER=vfs \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- "-e AIRLOCK_PODMAN_STORAGE_DRIVER=vfs" || \
+  fail "expected yolo to forward AIRLOCK_PODMAN_STORAGE_DRIVER"
+ok "yolo nested podman storage driver: ok"
+
+## yolo: OpenCode mounts are opt-out
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_MOUNT_OPENCODE=0 \
+  stow/airlock/bin/yolo -- bash -lc 'echo ok'
+)"
+if printf '%s\n' "$out" | grep -q -- "/home/airlock/.config/opencode"; then
+  fail "expected yolo to omit OpenCode mounts when AIRLOCK_MOUNT_OPENCODE=0"
+fi
+if printf '%s\n' "$out" | grep -q -- "/home/airlock/.local/share/opencode"; then
+  fail "expected yolo to omit OpenCode mounts when AIRLOCK_MOUNT_OPENCODE=0"
+fi
+ok "yolo OpenCode mounts opt-out: ok"
+
+## yolo: publish ports
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/yolo --publish 1455:1455 -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- "-p 1455:1455" || fail "expected yolo --publish to add -p"
+ok "yolo publish ports: ok"
 
 ## yolo: host networking opt-in
 out="$(
@@ -234,20 +271,6 @@ printf '%s\n' "$out" | grep -q 'FAKE_ENGINE: run ' || fail "expected yolo --new 
 printf '%s\n' "$out" | grep -q -- '--name airlock-test-new-' || fail "expected yolo --new to append a unique suffix to the container name"
 ok "yolo --new starts a second container: ok"
 
-## yolo: Airlock-managed Codex state opt-in (policy overrides mounted ro)
-out="$(
-  AIRLOCK_ENGINE=true \
-  AIRLOCK_DRY_RUN=1 \
-  AIRLOCK_CODEX_HOME_MODE=airlock \
-  stow/airlock/bin/yolo -- bash -lc 'echo ok'
-)"
-printf '%s\n' "$out" | grep -q -- "-v $HOME/.airlock/codex-state:/home/airlock/.codex:rw" || fail "expected yolo to mount ~/.airlock/codex-state when AIRLOCK_CODEX_HOME_MODE=airlock"
-printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/config.toml:ro' || fail "expected yolo to mount policy config.toml ro when AIRLOCK_CODEX_HOME_MODE=airlock"
-if printf '%s\n' "$out" | grep -q -- '/home/airlock/.codex/AGENTS.md:ro'; then
-  fail "expected yolo to NOT mount a policy AGENTS.md (use host ~/.codex/AGENTS.md instead)"
-fi
-ok "yolo airlock codex home opt-in: ok"
-
 ## yolo: extra dirs (ro + rw mounts); forwards rw mounts to codex --add-dir
 out="$(
   AIRLOCK_ENGINE=true \
@@ -288,6 +311,32 @@ else
   ok "yolo unreadable host config guard: ok"
 fi
 
+## yolo: opencode fails fast if host ~/.local/share/opencode/auth.json is unreadable
+# Note: this is only meaningful when running as a non-root user; root can read 000 files.
+if [[ "$(id -u)" -eq 0 ]]; then
+  ok "yolo unreadable host OpenCode auth guard: n/a (running as root)"
+else
+  mkdir -p "$HOME/.local/share/opencode"
+  printf '%s\n' "{}" >"$HOME/.local/share/opencode/auth.json"
+  chmod 000 "$HOME/.local/share/opencode/auth.json"
+
+  set +e
+  out="$(
+    AIRLOCK_ENGINE=true \
+    AIRLOCK_DRY_RUN=1 \
+    stow/airlock/bin/yolo -- opencode --help 2>&1
+  )"
+  status=$?
+  set -e
+
+  [[ "$status" -ne 0 ]] || fail "expected yolo to exit non-zero when host OpenCode auth.json is unreadable"
+  printf '%s\n' "$out" | grep -q 'ERROR: host OpenCode auth not readable' || \
+    fail "expected yolo to print an actionable error for unreadable host OpenCode auth"
+
+  chmod 600 "$HOME/.local/share/opencode/auth.json"
+  ok "yolo unreadable host OpenCode auth guard: ok"
+fi
+
 ## yolo: if run from a git subdir, mount repo root so `.git/` is available
 if command -v git >/dev/null 2>&1; then
   workrepo="$tmp/workrepo"
@@ -323,14 +372,18 @@ out="$(
   AIRLOCK_IMAGE=airlock-agent:test \
   AIRLOCK_BASE_IMAGE=example/base:latest \
   AIRLOCK_CODEX_VERSION=0.0.0 \
+  AIRLOCK_OPENCODE_VERSION=0.0.0 \
   AIRLOCK_NPM_VERSION=9.9.9 \
+  AIRLOCK_EDITOR_PKG=vim-nox \
   stow/airlock/bin/airlock-build
 )"
 printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected airlock-build dry-run to print CMD:"
 printf '%s\n' "$out" | grep -q -- ' build ' || fail "expected airlock-build to use engine build"
 printf '%s\n' "$out" | grep -q -- 'BASE_IMAGE=example/base:latest' || fail "expected BASE_IMAGE build-arg"
 printf '%s\n' "$out" | grep -q -- 'CODEX_VERSION=0.0.0' || fail "expected CODEX_VERSION build-arg"
+printf '%s\n' "$out" | grep -q -- 'OPENCODE_VERSION=0.0.0' || fail "expected OPENCODE_VERSION build-arg"
 printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=9.9.9' || fail "expected NPM_VERSION build-arg"
+printf '%s\n' "$out" | grep -q -- 'EDITOR_PKG=vim-nox' || fail "expected EDITOR_PKG build-arg"
 ok "airlock-build dry-run: ok"
 
 ## airlock-build: podman defaults isolation to chroot
@@ -372,6 +425,32 @@ out="$(
 printf '%s\n' "$out" | grep -q -- '--pull-never' || fail "expected podman build to use --pull-never when AIRLOCK_PULL=0"
 ok "airlock-build pull toggle: ok"
 
+## scripts/install.sh + scripts/uninstall.sh: symlink install mode (no stow)
+install_home="$tmp/install-home"
+mkdir -p "$install_home"
+
+HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/install.sh"
+
+[[ -L "$install_home/bin/yolo" ]] || fail "expected symlink install to create ~/bin/yolo"
+[[ -L "$install_home/bin/airlock-build" ]] || fail "expected symlink install to create ~/bin/airlock-build"
+[[ -L "$install_home/bin/airlock-doctor" ]] || fail "expected symlink install to create ~/bin/airlock-doctor"
+[[ -L "$install_home/.airlock/config" ]] || fail "expected symlink install to create ~/.airlock/config symlink"
+[[ -L "$install_home/.airlock/image" ]] || fail "expected symlink install to create ~/.airlock/image symlink"
+
+real_yolo="$(readlink -f "$install_home/bin/yolo")"
+real_yolo_src="$(readlink -f "$REPO_ROOT/stow/airlock/bin/yolo")"
+[[ "$real_yolo" == "$real_yolo_src" ]] || fail "expected ~/bin/yolo to link to repo yolo script"
+
+HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/uninstall.sh"
+
+[[ ! -e "$install_home/bin/yolo" ]] || fail "expected symlink uninstall to remove ~/bin/yolo"
+[[ ! -e "$install_home/bin/airlock-build" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-build"
+[[ ! -e "$install_home/bin/airlock-doctor" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-doctor"
+[[ ! -e "$install_home/.airlock/config" ]] || fail "expected symlink uninstall to remove ~/.airlock/config"
+[[ ! -e "$install_home/.airlock/image" ]] || fail "expected symlink uninstall to remove ~/.airlock/image"
+
+ok "symlink install/uninstall: ok"
+
 ## stow install/uninstall (idempotence + symlinks)
 if command -v stow >/dev/null 2>&1; then
   stow_home="$tmp/stow-home"
@@ -379,10 +458,10 @@ if command -v stow >/dev/null 2>&1; then
 
   stow -d "$REPO_ROOT/stow" -t "$stow_home" airlock
   [[ -d "$stow_home/.airlock" && ! -L "$stow_home/.airlock" ]] || fail "expected .airlock to be a real directory"
-  [[ -L "$stow_home/.airlock/policy" ]] || fail "expected stowed policy to be symlinked"
+  [[ -L "$stow_home/.airlock/config" ]] || fail "expected stowed config to be symlinked"
   [[ -L "$stow_home/.airlock/image" ]] || fail "expected stowed image to be symlinked"
   [[ -L "$stow_home/bin/yolo" ]] || fail "expected stowed yolo to be a symlink"
-  [[ -e "$stow_home/.airlock/policy/codex.config.toml" ]] || fail "expected codex config to exist under stowed policy"
+  [[ -e "$stow_home/.airlock/config/zshrc" ]] || fail "expected zshrc to exist under stowed config"
 
   stow -d "$REPO_ROOT/stow" -t "$stow_home" airlock
   ok "stow idempotence: ok"
@@ -391,7 +470,7 @@ if command -v stow >/dev/null 2>&1; then
   [[ -d "$stow_home/bin" ]] || fail "expected bin directory to remain after uninstall"
   [[ -d "$stow_home/.airlock" ]] || fail "expected .airlock directory to remain after uninstall"
   [[ ! -e "$stow_home/bin/yolo" ]] || fail "expected yolo removed after uninstall"
-  [[ ! -e "$stow_home/.airlock/policy" ]] || fail "expected policy symlink removed after uninstall"
+  [[ ! -e "$stow_home/.airlock/config" ]] || fail "expected config symlink removed after uninstall"
   [[ ! -e "$stow_home/.airlock/image" ]] || fail "expected image symlink removed after uninstall"
   ok "stow uninstall: ok"
 else
