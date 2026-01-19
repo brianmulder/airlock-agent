@@ -28,6 +28,23 @@ ok "unit setup"
 [[ -x stow/airlock/bin/airlock-wsl-prereqs ]] || fail "expected airlock-wsl-prereqs to be executable"
 ok "airlock-wsl-prereqs: present"
 
+## airlock dispatcher exists and can delegate to yolo/build in dry-run mode.
+[[ -x stow/airlock/bin/airlock ]] || fail "expected airlock dispatcher to be executable"
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/airlock dock -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected airlock dock to delegate to yolo (dry-run prints CMD:)"
+printf '%s\n' 'FROM debian:bookworm-slim' >"$HOME/.airlock/image/agent.Dockerfile"
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/airlock build
+)"
+printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected airlock build to delegate to airlock-build (dry-run prints CMD:)"
+ok "airlock dispatcher: ok"
+
 ## agent image: editor support for $EDITOR
 grep -q -- 'ARG EDITOR_PKG=vim-tiny' stow/airlock/.airlock/image/agent.Dockerfile || \
   fail "expected agent.Dockerfile to default EDITOR_PKG to vim-tiny"
@@ -446,8 +463,10 @@ mkdir -p "$install_home"
 HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/install.sh"
 
 [[ -L "$install_home/bin/yolo" ]] || fail "expected symlink install to create ~/bin/yolo"
+[[ -L "$install_home/bin/airlock" ]] || fail "expected symlink install to create ~/bin/airlock"
 [[ -L "$install_home/bin/airlock-build" ]] || fail "expected symlink install to create ~/bin/airlock-build"
 [[ -L "$install_home/bin/airlock-doctor" ]] || fail "expected symlink install to create ~/bin/airlock-doctor"
+[[ -L "$install_home/bin/airlock-wsl-prereqs" ]] || fail "expected symlink install to create ~/bin/airlock-wsl-prereqs"
 [[ -L "$install_home/.airlock/config" ]] || fail "expected symlink install to create ~/.airlock/config symlink"
 [[ -L "$install_home/.airlock/image" ]] || fail "expected symlink install to create ~/.airlock/image symlink"
 
@@ -458,8 +477,10 @@ real_yolo_src="$(readlink -f "$REPO_ROOT/stow/airlock/bin/yolo")"
 HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/uninstall.sh"
 
 [[ ! -e "$install_home/bin/yolo" ]] || fail "expected symlink uninstall to remove ~/bin/yolo"
+[[ ! -e "$install_home/bin/airlock" ]] || fail "expected symlink uninstall to remove ~/bin/airlock"
 [[ ! -e "$install_home/bin/airlock-build" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-build"
 [[ ! -e "$install_home/bin/airlock-doctor" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-doctor"
+[[ ! -e "$install_home/bin/airlock-wsl-prereqs" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-wsl-prereqs"
 [[ ! -e "$install_home/.airlock/config" ]] || fail "expected symlink uninstall to remove ~/.airlock/config"
 [[ ! -e "$install_home/.airlock/image" ]] || fail "expected symlink uninstall to remove ~/.airlock/image"
 
@@ -475,6 +496,8 @@ if command -v stow >/dev/null 2>&1; then
   [[ -L "$stow_home/.airlock/config" ]] || fail "expected stowed config to be symlinked"
   [[ -L "$stow_home/.airlock/image" ]] || fail "expected stowed image to be symlinked"
   [[ -L "$stow_home/bin/yolo" ]] || fail "expected stowed yolo to be a symlink"
+  [[ -L "$stow_home/bin/airlock" ]] || fail "expected stowed airlock dispatcher to be a symlink"
+  [[ -L "$stow_home/bin/airlock-wsl-prereqs" ]] || fail "expected stowed airlock-wsl-prereqs to be a symlink"
   [[ -e "$stow_home/.airlock/config/zshrc" ]] || fail "expected zshrc to exist under stowed config"
 
   stow -d "$REPO_ROOT/stow" -t "$stow_home" airlock
@@ -484,6 +507,8 @@ if command -v stow >/dev/null 2>&1; then
   [[ -d "$stow_home/bin" ]] || fail "expected bin directory to remain after uninstall"
   [[ -d "$stow_home/.airlock" ]] || fail "expected .airlock directory to remain after uninstall"
   [[ ! -e "$stow_home/bin/yolo" ]] || fail "expected yolo removed after uninstall"
+  [[ ! -e "$stow_home/bin/airlock" ]] || fail "expected airlock removed after uninstall"
+  [[ ! -e "$stow_home/bin/airlock-wsl-prereqs" ]] || fail "expected airlock-wsl-prereqs removed after uninstall"
   [[ ! -e "$stow_home/.airlock/config" ]] || fail "expected config symlink removed after uninstall"
   [[ ! -e "$stow_home/.airlock/image" ]] || fail "expected image symlink removed after uninstall"
   ok "stow uninstall: ok"

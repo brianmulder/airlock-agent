@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: airlock <command> [args...]
+
+Commands:
+  dock        Launch the Airlock agent container (safe defaults; engine socket mount disabled unless enabled).
+  yolo        Launch like `dock`, but force-enable engine socket passthrough (high-trust).
+  build       Build the agent image (alias for `airlock-build`).
+  doctor      Check local prerequisites (alias for `airlock-doctor`).
+
+Examples:
+  airlock dock
+  airlock dock -- bash -lc 'id; git status --porcelain'
+  airlock yolo -- docker version
+  airlock build
+  airlock doctor
+
+Notes:
+  - `airlock dock` defaults to disabling engine socket passthrough (equivalent to AIRLOCK_MOUNT_ENGINE_SOCKET=0),
+    but you can opt in per-run via `--engine-socket` or by setting AIRLOCK_MOUNT_ENGINE_SOCKET=1.
+  - `airlock yolo` prepends `--engine-socket` (and is still overridden by `--dind`, which disables socket passthrough).
+USAGE
+}
+
+case "${1:-}" in
+  -h|--help|"")
+    usage
+    exit 0
+    ;;
+esac
+
+subcmd="$1"
+shift
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+yolo="$script_dir/yolo"
+build="$script_dir/airlock-build"
+doctor="$script_dir/airlock-doctor"
+
+case "$subcmd" in
+  dock)
+    # Safe default: disable host engine socket passthrough unless explicitly enabled.
+    AIRLOCK_MOUNT_ENGINE_SOCKET="${AIRLOCK_MOUNT_ENGINE_SOCKET:-0}" exec "$yolo" "$@"
+    ;;
+  yolo)
+    exec "$yolo" --engine-socket "$@"
+    ;;
+  build)
+    exec "$build" "$@"
+    ;;
+  doctor)
+    exec "$doctor" "$@"
+    ;;
+  *)
+    echo "ERROR: unknown airlock command: $subcmd" >&2
+    echo >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+

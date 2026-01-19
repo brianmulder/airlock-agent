@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- `docs/chatgpt-original-conversation-log.md`: original conversation log (historical; not maintained).
+- `docs/history/chatgpt-original-conversation-log.md`: original conversation log (historical; not maintained).
 - `docs/`: runbook, threat model, spec addendum, and living decisions.
 - `stow/airlock/`: GNU Stow package installed into `$HOME` (binaries + `~/.airlock` templates).
 - `scripts/`: repo-local helpers (install/uninstall and test entrypoints).

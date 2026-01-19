@@ -16,6 +16,7 @@ shell_files=(
   scripts/test-system.sh
   scripts/test-system-dind.sh
   scripts/venv.sh
+  stow/airlock/bin/airlock
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/airlock-wsl-prereqs
@@ -48,6 +49,7 @@ exec_files=(
   scripts/test-system.sh
   scripts/test-system-dind.sh
   scripts/venv.sh
+  stow/airlock/bin/airlock
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
   stow/airlock/bin/airlock-wsl-prereqs

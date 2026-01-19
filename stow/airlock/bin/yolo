@@ -32,7 +32,10 @@ Options:
                       Example: --publish 1455:1455 (needed for some OAuth callbacks on WSL/Windows).
   --dind              Enable Docker-in-Docker (starts `dockerd` inside the container).
                       Implies `--no-engine-socket` and runs the container privileged.
-  --no-engine-socket  Disable mounting the host container engine socket.
+  --engine-socket[=<0|1>]
+                      Enable/disable mounting the host container engine socket (default: auto when available).
+                      Use 0 to disable; use 1 to force-enable (when a socket exists).
+  --no-engine-socket  Alias for --engine-socket=0.
   --name <NAME>       Container name override (default: airlock-<basename of $PWD>).
   --new               Start a new container if the default name is already running.
   -h, --help          Show this help.
@@ -115,6 +118,21 @@ while (( $# > 0 )); do
       ;;
     --name=*)
       YOLO_NAME_OVERRIDE="${1#--name=}"
+      shift
+      ;;
+    --engine-socket)
+      AIRLOCK_MOUNT_ENGINE_SOCKET=1
+      shift
+      ;;
+    --engine-socket=*)
+      engine_socket_mode="${1#--engine-socket=}"
+      case "$engine_socket_mode" in
+        0|1) AIRLOCK_MOUNT_ENGINE_SOCKET="$engine_socket_mode" ;;
+        *)
+          echo "ERROR: --engine-socket expects 0 or 1 (got: $engine_socket_mode)" >&2
+          exit 1
+          ;;
+      esac
       shift
       ;;
     --no-engine-socket)

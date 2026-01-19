@@ -1,3 +1,8 @@
+> **Historical raw transcript.** Not maintained. May be outdated, and may contain internal tool artifacts.
+> Canonical docs: `docs/getting-started.md`, `README.md`.
+
+---
+
 # Technical Specification: "The Airlock" Architecture
 
 > Historical ChatGPT transcript kept for context. This file is not maintained; see `docs/getting-started.md` for current usage.
@@ -33,7 +38,7 @@ graph TD
         direction TB
         SafeHaven[Safe Haven<br/>(~/dropbox/fred)]
         Neovim[Neovim / User Shell]
-        
+
         %% Security Barrier
         NoMount(❌ No /mnt/c Access)
     end
@@ -41,7 +46,7 @@ graph TD
     subgraph Container_Layer [Layer 2: Ephemeral Agent]
         Agent[AI Agent / Codex CLI]
         Runtime[Node 20 / Python 3]
-        
+
         %% Permissions
         Agent -- Read/Write --> ProjectFiles[Active Project]
         Agent -- Read Only --> SafeHaven
@@ -237,7 +242,6 @@ my intent is to use this as the next step in my ai agent assisted dev workflow o
 (not a hill to die on at this stage, but a note on where we're reinventing the wheel will be appreciated, without getting into analysis paralysis or tool acquisition syndrome)
 
 ChatGPT:
-[Silence]
 
 |
 You’re very close to something solid: “least‑privilege by mount”, human-in-WSL, agent-in-container, and a narrow filesystem bridge. The overall shape is sound.
@@ -268,7 +272,7 @@ You mount:
 
 Both paths live under the same Windows Dropbox mount (DrvFS). That creates a classic bypass:
 
-Hardlink escape.\
+Hardlink escape.
 Inside the container, the agent can hardlink a file from `/context/...` into `/drafts/...` (which is writable), then edit it via the hardlink. Result: the original “read-only” context file changes.
 
 Example of the attack shape (not exotic; it’s one command):
@@ -287,12 +291,12 @@ Do not place the agent-writable outbox on the same filesystem as the RO context.
 Practical options, ordered by simplicity:
 
 1. Best: drafts on WSL ext4, not inside Dropbox.
-   - `SAFE_HAVEN` stays in Dropbox (Windows-mounted) and is RO to the agent.
-   - `DRAFTS` lives in WSL native storage (fast) and is RW to the agent.
-   - After review, you copy selected outputs into Dropbox.
+ - `SAFE_HAVEN` stays in Dropbox (Windows-mounted) and is RO to the agent.
+ - `DRAFTS` lives in WSL native storage (fast) and is RW to the agent.
+ - After review, you copy selected outputs into Dropbox.
 
-2. Alternative: run the agent as a different UID than the safe haven’s owner, and rely on `fs.protected_hardlinks=1` style protections + permissions.\
-   This gets fiddly fast (ownership/umask/ACLs) and breaks your “keep-id” niceness.
+2. Alternative: run the agent as a different UID than the safe haven’s owner, and rely on `fs.protected_hardlinks=1` style protections + permissions.
+ This gets fiddly fast (ownership/umask/ACLs) and breaks your “keep-id” niceness.
 
 If you want “data diode” to mean what it says, option (1) is the clean move.
 
@@ -355,8 +359,8 @@ Also add:
 
 ### What’s missing for “sufficient” (in the security sense)
 
-- Fix the RO context bypass (outbox must not share FS with context) ❌\
-  This is the one change I’d treat as non-negotiable if you care about the “RO history” claim.
+- Fix the RO context bypass (outbox must not share FS with context) ❌
+ This is the one change I’d treat as non-negotiable if you care about the “RO history” claim.
 
 ### What’s missing for “sufficient” (in the operational sense)
 
@@ -494,7 +498,7 @@ graph TD
         SafeHaven[Safe Haven<br/>~/dropbox/fred]
         Neovim[Neovim / User Shell]
         LocalRepo[Project Repo]
-        
+
         %% Security Barrier
         NoMount(❌ No /mnt/c Access)
     end
@@ -502,7 +506,7 @@ graph TD
     subgraph Layer_2 [Layer 2: Ephemeral Agents]
         Agent[AI Agent / Codex CLI]
         Runtime[Node 20 / Python 3]
-        
+
         %% Permissions
         Agent -- Read/Write --> LocalRepo
         Agent -- Read Only --> SafeHaven
@@ -610,7 +614,7 @@ Inside the container, the AI operates in "Autonomous Mode." We inject a configur
 ```json
 {
   "sandbox": {
-    "mode": "permissive", 
+    "mode": "permissive",
     "fs": { "scope": ["workspace"], "read_only": false },
     "network": { "allow_outbound": true }
   },
@@ -744,7 +748,6 @@ We enable parallel agent workflows without complex Git Worktrees by utilizing th
 please re-review in full?
 
 ChatGPT:
-[Silence]
 
 |
 Alright — full re-review, with the updated spec as the source of truth.
@@ -756,7 +759,7 @@ Net: the shape is still good, but this v2 introduces (1) a couple of correctness
 ### Sound
 
 - WSL as the “human manager” + Docker as the “agent executor” is a sane division of labour.
-- Disabling WSL automount then re‑mounting a single Windows folder via `/etc/fstab` is the right idea. citeturn5view0
+- Disabling WSL automount then re‑mounting a single Windows folder via `/etc/fstab` is the right idea.
 - UID/GID mapping and keeping project files on WSL ext4 keeps Neovim/Git ergonomics intact.
 
 ### Not sound as written
@@ -764,9 +767,9 @@ Net: the shape is still good, but this v2 introduces (1) a couple of correctness
 1. Your “RO Safe Haven” is still bypassable because drafts live under the same Dropbox/DrvFS filesystem as the RO context. This is the big one. (Hardlink trick = RO turns into “lol nope”.)
 
 2. You’re mixing tooling ecosystems:
-   - Dockerfile installs `opencode-ai` via pip (which appears to be a Python API library), while the spec narrative is “Codex CLI” and you inject a `.codex` config as JSON. Those don’t line up with either OpenAI Codex CLI or OpenCode’s documented config formats/paths. citeturn6search15turn3view0turn4view1
+ - Dockerfile installs `opencode-ai` via pip (which appears to be a Python API library), while the spec narrative is “Codex CLI” and you inject a `.codex` config as JSON. Those don’t line up with either OpenAI Codex CLI or OpenCode’s documented config formats/paths.
 
-3. Security claims are too absolute. Docker Desktop has had a critical vuln (CVE‑2025‑9074) where a malicious container could access the Docker Engine API and then get at host files; fixed in 4.44.3; ECI didn’t mitigate. Your model should explicitly assume “update cadence matters.” citeturn1search1turn1search4
+3. Security claims are too absolute. Docker Desktop has had a critical vuln (CVE‑2025‑9074) where a malicious container could access the Docker Engine API and then get at host files; fixed in 4.44.3; ECI didn’t mitigate. Your model should explicitly assume “update cadence matters.”
 
 If you fix (1) + (2), this becomes “good enough to be useful without self‑delusion”.
 
@@ -780,7 +783,7 @@ Right now it’s not a diode; it’s two explicit one-way lanes:
 
 - `/context` is “read lane”
 - `/drafts` is “write lane”
-  …plus `/work` is full duplex.
+ …plus `/work` is full duplex.
 
 That’s fine, just don’t oversell it as physical one-directionality. Call it something like “review-gated promotion pipeline” or “mount-policy diode” if you want the vibe without lying to yourself.
 
@@ -794,9 +797,9 @@ Dropbox is also a network exfil channel by design. If the outbox is inside Dropb
 
 ### 2.1 `/etc/wsl.conf`
 
-Your config is valid and matches Microsoft’s documented keys. citeturn5view0
+Your config is valid and matches Microsoft’s documented keys.
 
-But the precision fix: `enabled=false` means not automatically mounted, not “impossible.” Microsoft explicitly notes drives won’t be mounted automatically, but can still be mounted manually or via `/etc/fstab`. citeturn5view0
+But the precision fix: `enabled=false` means not automatically mounted, not “impossible.” Microsoft explicitly notes drives won’t be mounted automatically, but can still be mounted manually or via `/etc/fstab`.
 
 So your security table line “Windows C: completely inaccessible” is only true by policy + absence of a mount, not by physics.
 
@@ -808,11 +811,11 @@ enabled=false
 appendWindowsPath=false
 ```
 
-Those are real documented knobs. citeturn5view0
+Those are real documented knobs.
 
 ### 2.2 `/etc/fstab`
 
-Mounting Dropbox via DrvFS is normal. Using `metadata` is good because permission masks only apply with metadata enabled. citeturn5view0
+Mounting Dropbox via DrvFS is normal. Using `metadata` is good because permission masks only apply with metadata enabled.
 
 One necessity/sufficiency check:
 
@@ -836,20 +839,20 @@ pip3 install ... opencode-ai
 
 But:
 
-- OpenCode (the agent) is documented as a separate CLI, installable via their installer script. citeturn4view0
-- `opencode-ai` looks like “the official Python library for the opencode API” — not the CLI. citeturn6search15\
-  So as written, your image likely does not contain the agent you think it contains (unless you’re deliberately using the Python SDK and calling it yourself).
+- OpenCode (the agent) is documented as a separate CLI, installable via their installer script.
+- `opencode-ai` looks like “the official Python library for the opencode API” — not the CLI.
+ So as written, your image likely does not contain the agent you think it contains (unless you’re deliberately using the Python SDK and calling it yourself).
 
 ### Pick one consistent path
 
 Option A — OpenAI Codex CLI
 
-- Install via npm: `npm i -g @openai/codex`. citeturn6search0turn6search1
-- Configure via `~/.codex/config.toml`, not JSON. citeturn3view0
+- Install via npm: `npm i -g @openai/codex`.
+- Configure via `~/.codex/config.toml`, not JSON.
 
 Option B — OpenCode
 
-- Install OpenCode CLI the way their docs prescribe (script/package manager), and configure via `~/.config/opencode/opencode.json` (or per-project `opencode.json`). citeturn4view0turn4view1
+- Install OpenCode CLI the way their docs prescribe (script/package manager), and configure via `~/.config/opencode/opencode.json` (or per-project `opencode.json`).
 
 Right now the spec is a chimera: “Codex CLI” language + `.codex` mounts + OpenCode-ish package naming.
 
@@ -861,16 +864,16 @@ Right now the spec is a chimera: “Codex CLI” language + `.codex` mounts + Op
 
 Your `agent-codex-config.json` is not aligned with OpenAI’s Codex configuration system:
 
-- Codex uses `~/.codex/config.toml` as the user config location. citeturn3view0
-- Approval is controlled by `approval_policy` (`untrusted | on-failure | on-request | never`). citeturn3view0
-- “full auto” and sandboxing are primarily flags like `--full-auto`, `--sandbox danger-full-access`, etc. citeturn3view1turn3view2
+- Codex uses `~/.codex/config.toml` as the user config location.
+- Approval is controlled by `approval_policy` (`untrusted | on-failure | on-request | never`).
+- “full auto” and sandboxing are primarily flags like `--full-auto`, `--sandbox danger-full-access`, etc.
 
-Also important: OpenAI explicitly notes that Codex’s own sandboxing may not work inside Docker if the container/host doesn’t support Landlock/seccomp the way it expects; they recommend relying on the container for isolation and then running Codex in a “danger-full-access” mode inside it. citeturn3view2\
+Also important: OpenAI explicitly notes that Codex’s own sandboxing may not work inside Docker if the container/host doesn’t support Landlock/seccomp the way it expects; they recommend relying on the container for isolation and then running Codex in a “danger-full-access” mode inside it.
 That’s basically your philosophy — just do it with the actual Codex config surface.
 
 ### If you mean OpenCode
 
-OpenCode’s config lives at `~/.config/opencode/opencode.json` by default (or `opencode.json` per project), and you can override via env vars like `OPENCODE_CONFIG` / `OPENCODE_CONFIG_CONTENT`. citeturn4view1turn4view2\
+OpenCode’s config lives at `~/.config/opencode/opencode.json` by default (or `opencode.json` per project), and you can override via env vars like `OPENCODE_CONFIG` / `OPENCODE_CONFIG_CONTENT`.
 So mounting a file into `/home/node/.codex/config.json` won’t affect OpenCode.
 
 Conclusion: this section fails the accuracy test until you choose the agent.
@@ -888,7 +891,7 @@ Conclusion: this section fails the accuracy test until you choose the agent.
 
 On Docker Desktop, host networking is “a feature,” not a given:
 
-- It’s supported on Docker Desktop 4.34+ and you must enable “Enable host networking” in settings. citeturn1search3
+- It’s supported on Docker Desktop 4.34+ and you must enable “Enable host networking” in settings.
 
 Security-wise: host networking enlarges the surface area (agent can poke local services, dev DBs, admin dashboards, etc.). If you don’t need it, drop it. If you do need it, keep it explicit.
 
@@ -905,7 +908,7 @@ DROPBOX_OUTBOX="$SAFE_HAVEN/outbox/drafts"
 
 Because both are on the same Dropbox/DrvFS filesystem, your RO boundary can be bypassed (hardlinks are the classic). This is exactly where your “diode” becomes a leaky faucet.
 
-Minimal fix with maximal effect: put drafts on a different filesystem (WSL ext4), then manually promote reviewed artifacts into Dropbox.\
+Minimal fix with maximal effect: put drafts on a different filesystem (WSL ext4), then manually promote reviewed artifacts into Dropbox.
 Example conceptual change:
 
 - `/context` stays Dropbox-backed and RO
@@ -940,14 +943,14 @@ As above: good for speed, but they’re now part of the “hot zone.” Treat th
 
 ### “Cognitive persistence”
 
-Persisting history is useful. But your spec currently says “history is immediately indexed and searchable by tools running on the host.”\
+Persisting history is useful. But your spec currently says “history is immediately indexed and searchable by tools running on the host.”
 That’s true if you have such tools, but it also means your host will process untrusted text blobs created by the agent. Not automatically dangerous, just something to explicitly classify as hot-zone data.
 
 ---
 
 ## 7. Concurrency model: workable, but it’s a race condition by design
 
-Mounting the same repo into multiple containers and letting them both write is basically saying:\
+Mounting the same repo into multiple containers and letting them both write is basically saying:
 “We’re doing eventual consistency with a human as the conflict resolver.”
 
 That’s okay. Just note the real pain points:
@@ -967,9 +970,9 @@ If you ever get sick of the chaos, git worktrees are the “wheel you’re reinv
 
 More precise version:
 
-- Not automatically mounted (`enabled=false`). citeturn5view0
-- Still mountable manually or via fstab (you are using fstab). citeturn5view0\
-  So “inaccessible” is a discipline, not an impossibility.
+- Not automatically mounted (`enabled=false`).
+- Still mountable manually or via fstab (you are using fstab).
+ So “inaccessible” is a discipline, not an impossibility.
 
 ### 8.2 “Zettelkasten — Read Only — cannot corrupt history”
 
@@ -977,7 +980,7 @@ Only true if you fix the drafts placement. As written, the bypass exists.
 
 ### 8.3 “Unable to compromise the host OS”
 
-Too absolute. Docker Desktop has had real critical escape-style issues, including CVE‑2025‑9074 where a malicious container could access the Docker Engine and then reach host files; fixed in 4.44.3, and ECI did not mitigate. citeturn1search1turn1search4\
+Too absolute. Docker Desktop has had real critical escape-style issues, including CVE‑2025‑9074 where a malicious container could access the Docker Engine and then reach host files; fixed in 4.44.3, and ECI did not mitigate.
 Your model should include: keep Docker Desktop updated as a first-class control, not an afterthought.
 
 ---
@@ -988,9 +991,9 @@ No tool acquisition syndrome — just the high-leverage edits:
 
 1. Move drafts off Dropbox onto WSL ext4 (fixes RO bypass + stops premature Dropbox sync).
 2. Pick one agent (OpenAI Codex CLI or OpenCode) and align:
-   - install method (`npm i -g @openai/codex` for Codex) citeturn6search0turn6search1
-   - config file format/location (Codex: `~/.codex/config.toml`; OpenCode: `~/.config/opencode/opencode.json`) citeturn3view0turn4view1
-3. Drop `--network host` by default; add it only when you have a specific reason, and remember it requires enabling in Docker Desktop. citeturn1search3
+ - install method (`npm i -g @openai/codex` for Codex)
+ - config file format/location (Codex: `~/.codex/config.toml`; OpenCode: `~/.config/opencode/opencode.json`)
+3. Drop `--network host` by default; add it only when you have a specific reason, and remember it requires enabling in Docker Desktop.
 4. Tone down the absolutes in the security table (make it precise, not aspirational).
 
 If you apply just those, you’re in “robust and honest” territory.
@@ -999,10 +1002,9 @@ If you want, I can rewrite the spec as a cleaned v2.1 (same intent, but internal
 
 
 You:
-yes please.  make it so.
+yes please. make it so.
 
 ChatGPT:
-[Silence]
 
 |
 Below is a cleaned, internally-consistent v2.1 of your spec with the big diode leak fixed, one agent toolchain chosen (OpenAI Codex CLI), and the security model made precise (no heroic absolutes).
@@ -1015,8 +1017,8 @@ Below is a cleaned, internally-consistent v2.1 of your spec with the big diode l
 
 The Airlock is a compartmentalized dev workflow for AI-assisted coding on Windows + WSL + Docker.
 
-- Manager Environment (WSL / Human): Neovim, Git, review, merges. WSL is hardened to avoid accidental Windows drive exposure by disabling automatic DrvFS mounts. citeturn2view0
-- Execution Environment (Docker / AI): an ephemeral container running Codex CLI with high autonomy, constrained by explicit bind mounts. citeturn1view4turn1view3
+- Manager Environment (WSL / Human): Neovim, Git, review, merges. WSL is hardened to avoid accidental Windows drive exposure by disabling automatic DrvFS mounts.
+- Execution Environment (Docker / AI): an ephemeral container running Codex CLI with high autonomy, constrained by explicit bind mounts.
 - Bridge (Dropbox / Context only): read-only context for the agent, mounted into WSL and then into the container as RO.
 - Outbox (WSL ext4 / Artifacts): agent writes artifacts into a WSL-native outbox (not inside Dropbox). This prevents “RO bypass” and avoids Dropbox syncing unreviewed outputs.
 
@@ -1061,8 +1063,8 @@ graph TD
 
 ### 3.1 Disable Windows drive automount
 
-File: `/etc/wsl.conf`\
-Purpose: prevent automatic mounting of fixed drives under `/mnt` (reduces accidental exposure of Windows paths). Setting `enabled=false` stops automount, but drives can still be mounted manually or via `/etc/fstab` (that’s intentional here). citeturn2view0
+File: `/etc/wsl.conf`
+Purpose: prevent automatic mounting of fixed drives under `/mnt` (reduces accidental exposure of Windows paths). Setting `enabled=false` stops automount, but drives can still be mounted manually or via `/etc/fstab` (that’s intentional here).
 
 ```ini
 [automount]
@@ -1094,7 +1096,7 @@ C:\Users\YourWinUser\Dropbox\fred            /home/fred/dropbox/fred  drvfs   de
 
 Notes:
 
-- `metadata` enables sane Linux permissions on DrvFS mounts; WSL documents how DrvFS + metadata affects uid/gid and permission masks. citeturn2view0
+- `metadata` enables sane Linux permissions on DrvFS mounts; WSL documents how DrvFS + metadata affects uid/gid and permission masks.
 - Keep the Safe Haven context-only: no secrets, no keys, nothing you wouldn’t paste into a prompt.
 
 Apply:
@@ -1126,7 +1128,7 @@ Why drafts are not in Dropbox: avoids RO-bypass via same-filesystem writable pat
 
 ## 5. Container Configuration (Agent Image)
 
-This image is optimized for JS/TS work (Node base) but includes Python and shell tooling. It installs Codex CLI via npm. citeturn1view4turn3view0
+This image is optimized for JS/TS work (Node base) but includes Python and shell tooling. It installs Codex CLI via npm.
 
 File: `~/agent.Dockerfile`
 
@@ -1147,7 +1149,7 @@ RUN apt-get update && apt-get install -y \
 RUN npm install -g typescript ts-node nodemon yarn pnpm
 
 # Install Codex CLI (pin if you want repeatability)
-# As of 2026-01-15, Codex CLI 0.84.0 is in the OpenAI changelog. You can pin it. citeturn3view0
+# As of 2026-01-15, Codex CLI 0.84.0 is in the OpenAI changelog. You can pin it.
 ARG CODEX_VERSION=0.84.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 
@@ -1168,7 +1170,7 @@ docker build -t airlock-agent -f ~/agent.Dockerfile .
 
 ## 6. Codex Configuration
 
-Codex reads config from `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`). citeturn1view0turn1view1
+Codex reads config from `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`).
 
 Airlock does not ship or mount a separate read-only Codex policy file. Instead, `yolo` mounts your host
 `~/.codex/` into the container (rw) and relies on container + mount boundaries for isolation.
@@ -1180,7 +1182,7 @@ If you want global agent instructions, put them in `~/.codex/AGENTS.md` (Codex a
 
 ## 7. Operational Tooling (Launcher)
 
-File: `~/bin/yolo`\
+File: `~/bin/yolo`
 `chmod +x ~/bin/yolo`
 
 ```bash
@@ -1210,7 +1212,7 @@ mkdir -p "$CACHE_HOME" "$DRAFTS_DIR"
 # --- Network: default is bridge; enable host only when explicitly requested ---
 NETWORK_ARGS=()
 if [[ "${AIRLOCK_NETWORK:-}" == "host" ]]; then
-  # Docker Desktop host networking requires enabling the feature in Settings (4.34+). citeturn3view1
+  # Docker Desktop host networking requires enabling the feature in Settings (4.34+).
   NETWORK_ARGS+=(--network host)
 fi
 
@@ -1275,7 +1277,7 @@ Inside the container:
 codex
 ```
 
-If you want “maximum autonomy” for a single run, Codex CLI also exposes a dangerous bypass flag (“yolo”), which is explicitly intended for externally hardened environments. citeturn1view3turn6search0\
+If you want “maximum autonomy” for a single run, Codex CLI also exposes a dangerous bypass flag (“yolo”), which is explicitly intended for externally hardened environments.
 (You generally won’t need it if your config already sets `approval_policy="never"` + `sandbox_mode="danger-full-access"`.)
 
 ### 8.3 Review + promote
@@ -1295,7 +1297,7 @@ cp ~/.airlock/outbox/drafts/thing.patch ~/dropbox/fred/outbox/reviewed/
 ### 9.1 What persists
 
 - `~/.codex` holds Codex state such as config/auth/history; Codex documents that its local state lives under
-  `CODEX_HOME` (default `~/.codex`). citeturn1view1turn1view0
+ `CODEX_HOME` (default `~/.codex`).
 - `~/.airlock/cache` persists package-manager caches for speed.
 
 ### 9.2 Performance expectations
@@ -1320,7 +1322,7 @@ If you outgrow this, Git worktrees are the canonical “stop stepping on rakes�
 
 ### 11.1 Protected zones
 
-- Windows fixed drives are not automatically mounted into WSL with `automount.enabled=false`. They can still be mounted manually or via fstab (you’re using fstab for the safe folder). citeturn2view0
+- Windows fixed drives are not automatically mounted into WSL with `automount.enabled=false`. They can still be mounted manually or via fstab (you’re using fstab for the safe folder).
 - Agent container only sees what you mount. No mount, no access.
 
 ### 11.2 Exposed zones
@@ -1331,7 +1333,7 @@ If you outgrow this, Git worktrees are the canonical “stop stepping on rakes�
 ### 11.3 Network
 
 - Default is Docker bridge networking (outbound allowed).
-- If you enable `AIRLOCK_NETWORK=host`, the container shares the host network namespace; on Docker Desktop it’s opt-in and has limitations (and conflicts with Enhanced Container Isolation). citeturn3view1
+- If you enable `AIRLOCK_NETWORK=host`, the container shares the host network namespace; on Docker Desktop it’s opt-in and has limitations (and conflicts with Enhanced Container Isolation).
 
 ---
 
@@ -1350,12 +1352,12 @@ That’s fine. You’re not collecting tools; you’re collecting boundaries.
 ### Quick checklist: “Is v2.1 behaving?”
 
 - In the container:
-  - `ls /mnt/c` → should fail (or not exist).
-  - `touch /context/whatever` → should fail (RO).
-  - `touch /drafts/ok` → should succeed.
-  - `touch /work/ok` → should succeed.
+ - `ls /mnt/c` → should fail (or not exist).
+ - `touch /context/whatever` → should fail (RO).
+ - `touch /drafts/ok` → should succeed.
+ - `touch /work/ok` → should succeed.
 - In WSL:
-  - you can review `/drafts/*` before anything touches Dropbox.
+ - you can review `/drafts/*` before anything touches Dropbox.
 
 ---
 
@@ -1373,11 +1375,10 @@ i want to
 
 so... please design and plan that out. producing an runbook and snippets drafted as a comprehensive step by step tutorial.
 
-include an errata/addendum for the airlock technical specification if you discover any issues/inconsistencies with v2.1 
+include an errata/addendum for the airlock technical specification if you discover any issues/inconsistencies with v2.1
 
 
 ChatGPT:
-[Silence]
 
 |
 Cool. Here’s a repo-first plan that:
@@ -1385,7 +1386,7 @@ Cool. Here’s a repo-first plan that:
 - lives at `~/code/github.com/brianmulder/airlock`
 - installs cleanly via GNU Stow (so it drops into anyone’s dotfiles workflow)
 - is easy to dogfood from your dotfiles repo (as a submodule or vendored package)
-- uses a Microsoft devcontainers base image (less wheel reinvention) with the base as a two‑way door (swapable via a build arg/env var). citeturn4view0
+- uses a Microsoft devcontainers base image (less wheel reinvention) with the base as a two‑way door (swapable via a build arg/env var).
 
 I’m going to give you:
 
@@ -1403,9 +1404,9 @@ I’m going to give you:
 - Everything installable is in a Stow package (no “run a random curl pipe” required).
 - Runtime state is not in dotfiles (only policy + templates are). Runtime dirs are created by scripts.
 - Image build is reproducible-ish but still flexible:
-  - default base: `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm` citeturn4view0
-  - overrideable: `AIRLOCK_BASE_IMAGE=...` (two-way door)
-- Codex configuration uses official `config.toml` keys (`approval_policy`, `sandbox_mode`, `model`) in the right place. citeturn3view0turn3view1turn3view2turn2view0
+ - default base: `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm`
+ - overrideable: `AIRLOCK_BASE_IMAGE=...` (two-way door)
+- Codex configuration uses official `config.toml` keys (`approval_policy`, `sandbox_mode`, `model`) in the right place.
 
 ## Proposed tree
 
@@ -1484,7 +1485,7 @@ mkdir -p docs scripts stow/airlock/{bin,.airlock/{policy,image}}
 
 You’re going to document it in `docs/WSL_HARDENING.md`, but the essential truth is:
 
-- `wsl.conf` can disable interop and stop automatic Windows drive mounts. citeturn6search0
+- `wsl.conf` can disable interop and stop automatic Windows drive mounts.
 - you explicitly mount only your Dropbox context folder via `fstab`.
 
 (We’ll include the exact doc template below.)
@@ -1529,7 +1530,7 @@ AIRLOCK_BASE_IMAGE=mcr.microsoft.com/devcontainers/typescript-node:20-bookworm a
 AIRLOCK_CODEX_VERSION=0.84.0 airlock-build
 ```
 
-Devcontainers image variants exist and are meant to be referenced/pinned this way. citeturn4view0
+Devcontainers image variants exist and are meant to be referenced/pinned this way.
 
 ## 2.6 Run health checks
 
@@ -1554,9 +1555,9 @@ codex
 
 Why the config is where it is:
 
-- Codex reads user config from `~/.codex/config.toml` (or under `CODEX_HOME`). citeturn3view1turn3view2
-- `approval_policy` and `sandbox_mode` are official config keys. citeturn3view0turn3view1
-- default/recommended model for Codex is `gpt-5.2-codex` (and it’s explicitly listed). citeturn2view0turn3view3
+- Codex reads user config from `~/.codex/config.toml` (or under `CODEX_HOME`).
+- `approval_policy` and `sandbox_mode` are official config keys.
+- default/recommended model for Codex is `gpt-5.2-codex` (and it’s explicitly listed).
 
 ## 2.8 Review + promote
 
@@ -1655,7 +1656,7 @@ This version:
 - keeps drafts RW but NOT under context
 - persists Codex state under `CODEX_HOME`
 - does robust UID/GID mapping via entrypoint (portable beyond UID=1000)
-- defaults to bridge networking; host networking is opt-in and requires enabling in Docker Desktop. citeturn5search0turn5search3
+- defaults to bridge networking; host networking is opt-in and requires enabling in Docker Desktop.
 
 ```bash
 #!/usr/bin/env bash
@@ -1779,7 +1780,7 @@ ok "basic checks complete"
 
 This is where the “good devcontainer base” + “two-way door” happens.
 
-- `BASE_IMAGE` defaults to Microsoft’s devcontainer node image. citeturn4view0
+- `BASE_IMAGE` defaults to Microsoft’s devcontainer node image.
 - Build arg lets you swap to another devcontainer base without rewriting the Dockerfile.
 
 ```dockerfile
@@ -1897,7 +1898,7 @@ Use Microsoft’s devcontainer node image:
 
 - published as `mcr.microsoft.com/devcontainers/javascript-node`
 - includes Node, eslint, nvm, yarn, zsh, Oh My Zsh, and a non-root user with sudo
-- provides `:20-bookworm` tag variants citeturn4view0
+- provides `:20-bookworm` tag variants
 
 ## Swap base image without committing to it
 
@@ -1924,36 +1925,36 @@ Here’s what I’d add to your v2.1 document to keep it internally consistent w
 ## A) Devcontainers base replaces raw `node:20-bookworm`
 
 Change: In “Container Configuration,” note the base image should default to:
-`mcr.microsoft.com/devcontainers/javascript-node:20-bookworm` citeturn4view0\
-Why: it’s a maintained devcontainer image with common dev ergonomics baked in (zsh, sudo-capable non-root user, etc.). citeturn4view0
+`mcr.microsoft.com/devcontainers/javascript-node:20-bookworm`
+Why: it’s a maintained devcontainer image with common dev ergonomics baked in (zsh, sudo-capable non-root user, etc.).
 
 ## B) Make the UID/GID story portable
 
 Change: Replace “we assume UID 1000” with:
 
 - “Container entrypoint maps runtime UID/GID to host UID/GID via `AIRLOCK_UID`/`AIRLOCK_GID`.”
-  Why: it keeps file ownership sane for people whose WSL user isn’t 1000 (and avoids sudo breaking when the user doesn’t exist).
+ Why: it keeps file ownership sane for people whose WSL user isn’t 1000 (and avoids sudo breaking when the user doesn’t exist).
 
 ## C) Codex config should be TOML + `CODEX_HOME` is the clean boundary
 
 Change: Under “Agent policy,” emphasize:
 
-- config is `config.toml` (not JSON), stored at `~/.codex/config.toml` or under `CODEX_HOME`. citeturn3view1turn3view2
-- keys like `approval_policy`, `sandbox_mode`, and `model` are standard. citeturn3view0turn3view1turn2view0
+- config is `config.toml` (not JSON), stored at `~/.codex/config.toml` or under `CODEX_HOME`.
+- keys like `approval_policy`, `sandbox_mode`, and `model` are standard.
 
 ## D) Host networking on Docker Desktop is opt-in
 
 Change: In the launcher section:
 
-- if using `--network host` on Docker Desktop, you must enable “Enable host networking” and be on Docker Desktop 4.34+ (and restart). citeturn5search0turn5search3\
-  Recommendation: default to bridge; make host networking an explicit env flag (`AIRLOCK_NETWORK=host`).
+- if using `--network host` on Docker Desktop, you must enable “Enable host networking” and be on Docker Desktop 4.34+ (and restart).
+ Recommendation: default to bridge; make host networking an explicit env flag (`AIRLOCK_NETWORK=host`).
 
 ## E) The “drafts in Dropbox” claim is incompatible with “quarantine”
 
 Change: Add explicit rule:
 
 - drafts must be on WSL ext4 (e.g., `~/.airlock/outbox/drafts`) and only manually promoted into Dropbox after review.
-  Why: prevents RO-bypass footguns and avoids syncing unreviewed artifacts.
+ Why: prevents RO-bypass footguns and avoids syncing unreviewed artifacts.
 
 ---
 
@@ -1966,7 +1967,6 @@ and then please author a worked tutorial that adds support for OpenCode and/or C
 the user mustn't be forced into any particular agent.
 
 ChatGPT:
-[Silence]
 
 |
 
@@ -1974,24 +1974,24 @@ ChatGPT:
 
 1. Codex config format + paths (JSON → TOML)
 
-- Your `agent-codex-config.json` doesn’t match how the current Codex CLI is configured. Codex uses `~/.codex/config.toml` (or `CODEX_HOME/config.toml`) and CLI overrides are parsed as TOML (`codex --config key=value`). citeturn15view0turn13view0
-- Codex also reads global and project `AGENTS.md` layers automatically (your “policy file” concept is right, just the mechanics differ). citeturn12search0turn12search5
+- Your `agent-codex-config.json` doesn’t match how the current Codex CLI is configured. Codex uses `~/.codex/config.toml` (or `CODEX_HOME/config.toml`) and CLI overrides are parsed as TOML (`codex --config key=value`).
+- Codex also reads global and project `AGENTS.md` layers automatically (your “policy file” concept is right, just the mechanics differ).
 
 2. OpenCode install mechanism (pip → npm or install script)
 
-- Your Dockerfile installs `opencode-ai` via `pip`. OpenCode’s docs specify `npm install -g opencode-ai` (or their curl installer). citeturn2view2\
-  So: your intent is solid; the install line is likely wrong.
+- Your Dockerfile installs `opencode-ai` via `pip`. OpenCode’s docs specify `npm install -g opencode-ai` (or their curl installer).
+ So: your intent is solid; the install line is likely wrong.
 
 3. OpenCode config + auth locations (so you mount the right things)
 
-- Global config is `~/.config/opencode/opencode.json`. citeturn16view0
-- Auth/token state is under `~/.local/share/opencode/` (e.g. `auth.json`, and MCP OAuth tokens in `mcp-auth.json`). citeturn4search0turn4search11\
-  If you want “cognitive persistence” without bleeding into your normal `$HOME`, mount those directories explicitly (not just some guessed `~/.codex`).
+- Global config is `~/.config/opencode/opencode.json`.
+- Auth/token state is under `~/.local/share/opencode/` (e.g. `auth.json`, and MCP OAuth tokens in `mcp-auth.json`).
+ If you want “cognitive persistence” without bleeding into your normal `$HOME`, mount those directories explicitly (not just some guessed `~/.codex`).
 
 4. Claude Code config model differs from both Codex and OpenCode
 
-- Claude Code has user settings at `~/.claude/settings.json`, and a separate `~/.claude.json` which includes OAuth session, caches, per-project state, etc. citeturn17view0
-- It also has a memory system (`CLAUDE.md` + `~/.claude/CLAUDE.md` etc). citeturn17view0turn6view0
+- Claude Code has user settings at `~/.claude/settings.json`, and a separate `~/.claude.json` which includes OAuth session, caches, per-project state, etc.
+- It also has a memory system (`CLAUDE.md` + `~/.claude/CLAUDE.md` etc).
 
 5. “Data diode” precision
 
@@ -2076,8 +2076,8 @@ airlock/
 
 - `stow/airlock/` mirrors `$HOME` cleanly, so `stow airlock` “just drops” your scripts + policy templates into place.
 - Policy templates are separate from state:
-  - `~/.airlock/policy/**` is human-managed, typically mounted RO.
-  - `~/.airlock/state/**` is agent runtime/auth/history, mounted RW.
+ - `~/.airlock/policy/**` is human-managed, typically mounted RO.
+ - `~/.airlock/state/**` is agent runtime/auth/history, mounted RW.
 - Agent-agnostic core: `yolo` and `airlock-build` work even if you install zero agents; they still launch the container shell.
 - Two-way door base image: Dockerfile uses `ARG BASE_IMAGE=...` so swapping base images is one env var, not a rewrite.
 
@@ -2087,7 +2087,7 @@ airlock/
 
 Default:
 
-- `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm` (or a close tag variant), which is designed as a “batteries-included” dev environment. citeturn9search0
+- `mcr.microsoft.com/devcontainers/javascript-node:20-bookworm` (or a close tag variant), which is designed as a “batteries-included” dev environment.
 
 You keep it a two-way door by doing:
 
@@ -2233,10 +2233,10 @@ ENTRYPOINT ["/bin/zsh"]
 
 Notes (grounded):
 
-- Codex CLI install via npm is the documented path. citeturn12search5
-- OpenCode install via npm (or their install script). citeturn2view2
-- Claude Code install script is the documented path. citeturn6view1
-- Devcontainers base is standard + widely used; tag exists on MCR/Docker Hub listings. citeturn9search0
+- Codex CLI install via npm is the documented path.
+- OpenCode install via npm (or their install script).
+- Claude Code install script is the documented path.
+- Devcontainers base is standard + widely used; tag exists on MCR/Docker Hub listings.
 
 ---
 
@@ -2286,26 +2286,26 @@ Codex
 
 - State: `~/.airlock/state/codex` → `/home/airlock/.codex` (RW)
 - Policy: `~/.airlock/policy/codex/config.toml` → `/home/airlock/.codex/config.toml` (RO)
-- Global instructions: `~/.airlock/policy/codex/AGENTS.md` → `/home/airlock/.codex/AGENTS.md` (RO)\
-  Codex discovers these via `CODEX_HOME` (defaults to `~/.codex`). citeturn15view0turn12search0
+- Global instructions: `~/.airlock/policy/codex/AGENTS.md` → `/home/airlock/.codex/AGENTS.md` (RO)
+ Codex discovers these via `CODEX_HOME` (defaults to `~/.codex`).
 
 OpenCode
 
-- Global config: `~/.config/opencode/opencode.json` is where it expects the global layer. citeturn16view0
-- Auth+state: `~/.local/share/opencode/` contains `auth.json`, etc. citeturn4search0turn4search6\
-  So mount:
+- Global config: `~/.config/opencode/opencode.json` is where it expects the global layer.
+- Auth+state: `~/.local/share/opencode/` contains `auth.json`, etc.
+ So mount:
 - State share dir RW
 - Config file RO
 
 Claude Code
 
-- User settings: `~/.claude/settings.json` citeturn17view0
-- Other config & auth & caches: `~/.claude.json` citeturn17view0
-- Memory file: `~/.claude/CLAUDE.md` citeturn6view0turn17view0
+- User settings: `~/.claude/settings.json`
+- Other config & auth & caches: `~/.claude.json`
+- Memory file: `~/.claude/CLAUDE.md`
 
 ### “Yolo mode” for Claude Code (optional)
 
-Claude Code explicitly supports a “skip prompts” flag: `--dangerously-skip-permissions`. citeturn8view0turn11search13\
+Claude Code explicitly supports a “skip prompts” flag: `--dangerously-skip-permissions`.
 So your launcher can expose:
 
 - `yolo claude` → normal prompts
@@ -2337,7 +2337,7 @@ Minimal, provider-agnostic template:
 }
 ```
 
-OpenCode supports JSON/JSONC, and describes the schema + locations + merge precedence. citeturn16view0
+OpenCode supports JSON/JSONC, and describes the schema + locations + merge precedence.
 
 ### Claude policy template
 
@@ -2365,7 +2365,7 @@ Minimal “don’t nag me” default:
 }
 ```
 
-This is the documented settings file mechanism and precedence. citeturn17view0turn11search2
+This is the documented settings file mechanism and precedence.
 
 Create: `~/.airlock/policy/claude/CLAUDE.md`
 
@@ -2379,14 +2379,14 @@ Create: `~/.airlock/policy/claude/CLAUDE.md`
 If project has AGENTS.md, treat it as the canonical project instructions.
 ```
 
-Claude Code’s memory hierarchy includes `~/.claude/CLAUDE.md` and project `CLAUDE.md` / `.claude/CLAUDE.md`. citeturn6view0turn17view0
+Claude Code’s memory hierarchy includes `~/.claude/CLAUDE.md` and project `CLAUDE.md` / `.claude/CLAUDE.md`.
 
 ## Step 2 — Extend the Dockerfile to install the agents (optional)
 
 In `docker/agent.Dockerfile`:
 
-- OpenCode install via npm citeturn2view2
-- Claude Code install via their script citeturn6view1
+- OpenCode install via npm
+- Claude Code install via their script
 
 (Use the build-arg toggles shown above.)
 
@@ -2479,7 +2479,7 @@ cd ~/code/some-project
 yolo codex
 ```
 
-Codex reads global instructions from `CODEX_HOME` and project `AGENTS.md` layers. citeturn12search0turn15view0
+Codex reads global instructions from `CODEX_HOME` and project `AGENTS.md` layers.
 
 ### OpenCode
 
@@ -2489,8 +2489,8 @@ cd ~/code/some-project
 yolo opencode
 ```
 
-OpenCode config precedence + global config location are documented. citeturn16view0\
-OpenCode can generate `AGENTS.md` via `/init` (nice for bootstrapping each repo). citeturn2view2
+OpenCode config precedence + global config location are documented.
+OpenCode can generate `AGENTS.md` via `/init` (nice for bootstrapping each repo).
 
 ### Claude Code
 
@@ -2502,17 +2502,17 @@ yolo claude
 yolo claude --yolo
 ```
 
-Claude Code config file locations and scopes are documented. citeturn17view0\
-YOLO flag is documented. citeturn8view0turn11search13
+Claude Code config file locations and scopes are documented.
+YOLO flag is documented.
 
 ---
 
 ## Tiny “don’t reinvent the wheel” wins (without tool-collection brainrot)
 
-- Use devcontainers base images as your standard foundation (you already wanted this). citeturn9search0
+- Use devcontainers base images as your standard foundation (you already wanted this).
 - Standardize project guidance in `AGENTS.md` (Codex reads it; OpenCode supports it; and Claude can use `CLAUDE.md` to import/reference it).
-  - Codex `AGENTS.md` behavior is explicitly documented. citeturn12search0turn12search8
-  - Claude memory system supports layered `CLAUDE.md`. citeturn6view0turn17view0
+ - Codex `AGENTS.md` behavior is explicitly documented.
+ - Claude memory system supports layered `CLAUDE.md`.
 - Keep `yolo` as the only “hard” UX surface, and treat agents as plugins. That’s how you avoid locking yourself into any vendor while still shipping something usable.
 
 If you want, next iteration can add a single optional “agent adapter” interface (a tiny `bash` registry) so adding future tools (Cursor Agent, Aider, etc.) is a 20-line drop-in—not a refactor.

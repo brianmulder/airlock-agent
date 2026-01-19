@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap turns the v2.1 “Airlock” spec in `docs/chatgpt-original-conversation-log.md` into a
+This roadmap turns the v2.1 “Airlock” spec in `docs/history/chatgpt-original-conversation-log.md` into a
 stow-installable repo you can dogfood from your dotfiles.
 
 ## Goals

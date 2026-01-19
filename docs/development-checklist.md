@@ -26,7 +26,9 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Add stow package skeleton under `stow/airlock/`
 - [x] Add `stow/airlock/bin/airlock-build`
 - [x] Add `stow/airlock/bin/airlock-doctor`
+- [x] Add `stow/airlock/bin/airlock` (thin dispatcher)
 - [x] Add `stow/airlock/bin/yolo`
+- [x] Add `stow/airlock/bin/airlock-wsl-prereqs` (WSL/Docker/Podman checks)
 - [x] Add shell config under `stow/airlock/.airlock/config/`
 - [x] Add image templates under `stow/airlock/.airlock/image/`
 - [x] Add wrapper: `scripts/install.sh`

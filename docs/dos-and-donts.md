@@ -12,7 +12,8 @@ chance of accidental credential exposure.
 - Disable the container engine socket mount when you don’t need it:
 
 ```bash
-AIRLOCK_MOUNT_ENGINE_SOCKET=0 yolo
+airlock dock
+# (equivalently) yolo --engine-socket=0
 ```
 
 - Treat Docker-in-Docker (`yolo --dind`) as an exception: it runs the agent container privileged.

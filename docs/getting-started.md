@@ -143,11 +143,16 @@ Required:
 
 ```bash
 cd ~/code/your-project
-yolo
+airlock dock
 ```
 
 Note: the workspace is mounted at a canonical `/host<host-path>` so Codex and git tooling don’t conflate
 sessions across different repos.
+
+Notes:
+
+- `airlock dock` is the recommended entrypoint (safer defaults: engine socket passthrough disabled).
+- `yolo` is still available as the underlying implementation.
 
 Tip: if you run `yolo` again from the same directory while the container is still running, it will attach.
 Use `yolo --new` to start a second container.
@@ -155,13 +160,14 @@ Use `yolo --new` to start a second container.
 Example (optional engine selection):
 
 ```bash
-AIRLOCK_ENGINE=nerdctl yolo
+AIRLOCK_ENGINE=nerdctl airlock dock
 ```
 
 ### Containers from inside `yolo` (optional)
 
-By default, Airlock will try to mount the host engine socket so you can run container builds from inside the
-agent container.
+By default, `yolo` will try to mount the host engine socket so you can run container builds from inside the
+agent container. `airlock dock` disables this by default; use `airlock yolo` (or `yolo --engine-socket`) to
+force-enable socket passthrough when desired.
 
 If you prefer not to mount the host engine socket, you can opt into Docker-in-Docker:
 

@@ -35,11 +35,16 @@ airlock-build
 
 ```bash
 cd ~/code/your-project
-yolo
+airlock dock
 ```
 
 Tip: if you run `yolo` again from the same directory while the container is still running, it will attach.
 Use `yolo --new` to start a second container.
+
+Notes:
+
+- `airlock dock` is the recommended entrypoint (safer defaults).
+- `yolo` is still available as the underlying implementation.
 
 Launch Codex:
 
@@ -111,6 +116,7 @@ yolo --mount-ro ~/path/to/dropbox/inputs -- codex
 ## Repository Layout
 
 - `docs/` – getting started guide and security notes
+- `docs/history/` – historical raw transcripts (not maintained)
 - `scripts/` – install/uninstall helpers
 - `stow/airlock/` – installable package (binaries + templates)
 - `docs/decisions.md` – living “why” notes (defaults, tradeoffs, troubleshooting)
@@ -142,7 +148,9 @@ Airlock mounts the host engine socket when available so you can run container bu
 shell (e.g., `docker build ...`). This is convenient but high-trust; disable it when you don’t need it:
 
 ```bash
-yolo --no-engine-socket
+airlock dock
+# (equivalently)
+# yolo --engine-socket=0
 ```
 
 If you disable the socket mount and still need to build/run containers from inside `yolo`, you can try nested

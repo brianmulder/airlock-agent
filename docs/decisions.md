@@ -57,7 +57,7 @@ Airlock will mount the host container engine socket when available so you can ru
 - Convenience: you can build/run containers from inside the agent container without installing/configuring a nested engine.
 - Risk: if the agent container can talk to the host engine socket, it can create other containers with different mounts and
   networking. Treat this as a high-trust feature.
-- Escape hatch: disable with `AIRLOCK_MOUNT_ENGINE_SOCKET=0`.
+- Escape hatch: disable with `airlock dock` (or `yolo --engine-socket=0` / `AIRLOCK_MOUNT_ENGINE_SOCKET=0`).
 - Alternative (nested): disable socket passthrough and use Podman inside the `yolo` container.
   - This is slower and may be less compatible; `AIRLOCK_PODMAN_STORAGE_DRIVER=vfs` is the most portable option.
 - Alternative (Docker-in-Docker): run a Docker daemon *inside* the `yolo` container.
