@@ -69,8 +69,11 @@ mkdir -p ~/.airlock ~/bin
 AIRLOCK_REPO=~/code/github.com/brianmulder/airlock
 
 ln -s "$AIRLOCK_REPO/stow/airlock/bin/yolo" ~/bin/yolo
+ln -s "$AIRLOCK_REPO/stow/airlock/bin/airlock" ~/bin/airlock
+ln -s "$AIRLOCK_REPO/stow/airlock/bin/airlock-config" ~/bin/airlock-config
 ln -s "$AIRLOCK_REPO/stow/airlock/bin/airlock-build" ~/bin/airlock-build
 ln -s "$AIRLOCK_REPO/stow/airlock/bin/airlock-doctor" ~/bin/airlock-doctor
+ln -s "$AIRLOCK_REPO/stow/airlock/bin/airlock-wsl-prereqs" ~/bin/airlock-wsl-prereqs
 
 ln -s "$AIRLOCK_REPO/stow/airlock/.airlock/config" ~/.airlock/config
 ln -s "$AIRLOCK_REPO/stow/airlock/.airlock/image" ~/.airlock/image
@@ -92,8 +95,11 @@ cp -a "$AIRLOCK_REPO/stow/airlock/.airlock/image" ~/.airlock/
 You should now have:
 
 - `~/bin/yolo`
+- `~/bin/airlock`
+- `~/bin/airlock-config`
 - `~/bin/airlock-build`
 - `~/bin/airlock-doctor`
+- `~/bin/airlock-wsl-prereqs`
 - `~/.airlock/config/*`
 - `~/.airlock/image/*`
 
@@ -103,6 +109,8 @@ Notes:
   `/home/airlock/.zshrc`. It keeps the prompt stable and sets `PATH` so project-local `node_modules/.bin`
   is available. Override with `AIRLOCK_ZSHRC=/path/to/zshrc`.
 - `~/.airlock/image/*` is the local build context for `airlock-build` (Dockerfile, entrypoint, wrappers).
+- Optional: set defaults via `~/.airlock/config.toml` (or override the path with `AIRLOCK_CONFIG_TOML=...`).
+  See `docs/configuration.md`.
 
 ## 4) Build the Agent Image
 

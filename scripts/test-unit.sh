@@ -28,6 +28,10 @@ ok "unit setup"
 [[ -x stow/airlock/bin/airlock-wsl-prereqs ]] || fail "expected airlock-wsl-prereqs to be executable"
 ok "airlock-wsl-prereqs: present"
 
+## airlock-config helper exists and is runnable (used for ~/.airlock/config.toml defaults).
+[[ -x stow/airlock/bin/airlock-config ]] || fail "expected airlock-config to be executable"
+ok "airlock-config: present"
+
 ## airlock dispatcher exists and can delegate to yolo/build in dry-run mode.
 [[ -x stow/airlock/bin/airlock ]] || fail "expected airlock dispatcher to be executable"
 out="$(
@@ -44,6 +48,89 @@ out="$(
 )"
 printf '%s\n' "$out" | grep -q '^CMD:' || fail "expected airlock build to delegate to airlock-build (dry-run prints CMD:)"
 ok "airlock dispatcher: ok"
+
+## config.toml defaults + profiles (requires python3 + tomllib/tomli)
+if command -v python3 >/dev/null 2>&1 && python3 - >/dev/null 2>&1 <<'PY'
+try:
+    import tomllib  # noqa: F401
+except ModuleNotFoundError:
+    import tomli  # noqa: F401
+PY
+then
+  cfg_toml="$tmp/airlock-config.toml"
+  cat >"$cfg_toml" <<TOML
+[airlock]
+engine = "podman"
+image = "airlock-agent:cfg"
+network = "host"
+mount_engine_socket = true
+add_dirs = ["$rw_dir"]
+mount_ros = ["$ro_dir"]
+publish_ports = ["1455:1455"]
+
+  [profiles.dock]
+  network = "bridge"
+  mount_engine_socket = false
+TOML
+
+  fakebin_cfg="$tmp/fakebin-cfg"
+  mkdir -p "$fakebin_cfg"
+  cat >"$fakebin_cfg/podman" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin_cfg/podman"
+
+  cfg_out="$(
+    AIRLOCK_CONFIG_TOML="$cfg_toml" \
+    stow/airlock/bin/airlock-config --profile dock
+  )"
+  printf '%s\n' "$cfg_out" | grep -q -- 'AIRLOCK_MOUNT_ENGINE_SOCKET=0' || \
+    fail "expected [profiles.dock] mount_engine_socket=false to set AIRLOCK_MOUNT_ENGINE_SOCKET=0"
+
+  out="$(
+    PATH="$fakebin_cfg:$PATH" \
+    AIRLOCK_CONFIG_TOML="$cfg_toml" \
+    AIRLOCK_DRY_RUN=1 \
+    stow/airlock/bin/airlock dock -- bash -lc 'echo ok'
+  )"
+  printf '%s\n' "$out" | grep -q 'Image:      airlock-agent:cfg' || fail "expected config.toml to set AIRLOCK_IMAGE"
+  if printf '%s\n' "$out" | grep -q -- '--network host'; then
+    fail "expected [profiles.dock] network=bridge override to disable host networking"
+  fi
+  printf '%s\n' "$out" | grep -q -- "-v $ro_dir:/host$ro_dir:ro" || fail "expected config.toml mount_ros to bind-mount ro"
+  printf '%s\n' "$out" | grep -q -- "-v $rw_dir:/host$rw_dir:rw" || fail "expected config.toml add_dirs to bind-mount rw"
+  printf '%s\n' "$out" | grep -q -- "-p 1455:1455" || fail "expected config.toml publish_ports to publish ports"
+  ok "config.toml profile dock: ok"
+
+  out="$(
+    PATH="$fakebin_cfg:$PATH" \
+    AIRLOCK_CONFIG_TOML="$cfg_toml" \
+    AIRLOCK_DRY_RUN=1 \
+    AIRLOCK_NETWORK=host \
+    stow/airlock/bin/airlock dock -- bash -lc 'echo ok'
+  )"
+  printf '%s\n' "$out" | grep -q -- '--network host' || fail "expected env vars to override config.toml"
+  ok "config.toml precedence env>config: ok"
+
+  cfg_out="$(
+    AIRLOCK_CONFIG_TOML="$cfg_toml" \
+    stow/airlock/bin/airlock-config --profile yolo
+  )"
+  printf '%s\n' "$cfg_out" | grep -q -- 'AIRLOCK_MOUNT_ENGINE_SOCKET=1' || \
+    fail "expected base mount_engine_socket=true to set AIRLOCK_MOUNT_ENGINE_SOCKET=1 for profile yolo"
+
+  out="$(
+    PATH="$fakebin_cfg:$PATH" \
+    AIRLOCK_CONFIG_TOML="$cfg_toml" \
+    AIRLOCK_DRY_RUN=1 \
+    stow/airlock/bin/airlock yolo -- bash -lc 'echo ok'
+  )"
+  printf '%s\n' "$out" | grep -q -- '--network host' || fail "expected base config.toml network=host to apply"
+  ok "config.toml profile yolo: ok"
+else
+  echo "WARN: python3 tomllib/tomli not available; skipping config.toml unit tests."
+fi
 
 ## agent image: editor support for $EDITOR
 grep -q -- 'ARG EDITOR_PKG=vim-tiny' stow/airlock/.airlock/image/agent.Dockerfile || \
@@ -417,6 +504,68 @@ printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=9.9.9' || fail "expected NPM_VERS
 printf '%s\n' "$out" | grep -q -- 'EDITOR_PKG=vim-nox' || fail "expected EDITOR_PKG build-arg"
 ok "airlock-build dry-run: ok"
 
+## airlock-build: config.toml defaults + profile overrides (requires python3 + tomllib/tomli)
+if command -v python3 >/dev/null 2>&1 && python3 - >/dev/null 2>&1 <<'PY'
+try:
+    import tomllib  # noqa: F401
+except ModuleNotFoundError:
+    import tomli  # noqa: F401
+PY
+then
+  fakebin_cfg_build="$tmp/fakebin-cfg-build"
+  mkdir -p "$fakebin_cfg_build"
+  cat >"$fakebin_cfg_build/podman" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fakebin_cfg_build/podman"
+
+  cfg_build="$tmp/airlock-build-config.toml"
+  cat >"$cfg_build" <<'TOML'
+[airlock]
+engine = "podman"
+image = "airlock-agent:cfgbuild"
+
+[build]
+base_image = "example/base:cfg"
+codex_version = "1.2.3"
+opencode_version = "4.5.6"
+npm_version = "9.9.9"
+editor_pkg = "vim-nox"
+pull = false
+
+[profiles.build]
+npm_version = "8.8.8"
+TOML
+
+  out="$(
+    PATH="$fakebin_cfg_build:$PATH" \
+    AIRLOCK_CONFIG_TOML="$cfg_build" \
+    AIRLOCK_DRY_RUN=1 \
+    stow/airlock/bin/airlock build
+  )"
+  printf '%s\n' "$out" | grep -q 'Image:      airlock-agent:cfgbuild' || fail "expected config.toml to set AIRLOCK_IMAGE for build"
+  printf '%s\n' "$out" | grep -q -- 'BASE_IMAGE=example/base:cfg' || fail "expected config.toml to set build.base_image"
+  printf '%s\n' "$out" | grep -q -- 'CODEX_VERSION=1.2.3' || fail "expected config.toml to set build.codex_version"
+  printf '%s\n' "$out" | grep -q -- 'OPENCODE_VERSION=4.5.6' || fail "expected config.toml to set build.opencode_version"
+  printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=8.8.8' || fail "expected [profiles.build] to override build.npm_version"
+  printf '%s\n' "$out" | grep -q -- 'EDITOR_PKG=vim-nox' || fail "expected config.toml to set build.editor_pkg"
+  printf '%s\n' "$out" | grep -q -- '--pull-never' || fail "expected build.pull=false to disable pulls"
+  ok "airlock-build config.toml defaults + profile: ok"
+
+  out="$(
+    PATH="$fakebin_cfg_build:$PATH" \
+    AIRLOCK_CONFIG_TOML="$cfg_build" \
+    AIRLOCK_DRY_RUN=1 \
+    AIRLOCK_NPM_VERSION=7.7.7 \
+    stow/airlock/bin/airlock build
+  )"
+  printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=7.7.7' || fail "expected env AIRLOCK_NPM_VERSION to override config.toml"
+  ok "airlock-build precedence env>config: ok"
+else
+  echo "WARN: python3 tomllib/tomli not available; skipping airlock-build config.toml unit tests."
+fi
+
 ## airlock-build: podman defaults isolation to chroot
 printf '%s\n' 'FROM debian:bookworm-slim' >"$HOME/.airlock/image/agent.Dockerfile"
 out="$(
@@ -464,6 +613,7 @@ HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/install.sh
 
 [[ -L "$install_home/bin/yolo" ]] || fail "expected symlink install to create ~/bin/yolo"
 [[ -L "$install_home/bin/airlock" ]] || fail "expected symlink install to create ~/bin/airlock"
+[[ -L "$install_home/bin/airlock-config" ]] || fail "expected symlink install to create ~/bin/airlock-config"
 [[ -L "$install_home/bin/airlock-build" ]] || fail "expected symlink install to create ~/bin/airlock-build"
 [[ -L "$install_home/bin/airlock-doctor" ]] || fail "expected symlink install to create ~/bin/airlock-doctor"
 [[ -L "$install_home/bin/airlock-wsl-prereqs" ]] || fail "expected symlink install to create ~/bin/airlock-wsl-prereqs"
@@ -478,6 +628,7 @@ HOME="$install_home" AIRLOCK_INSTALL_MODE=symlink "$REPO_ROOT/scripts/uninstall.
 
 [[ ! -e "$install_home/bin/yolo" ]] || fail "expected symlink uninstall to remove ~/bin/yolo"
 [[ ! -e "$install_home/bin/airlock" ]] || fail "expected symlink uninstall to remove ~/bin/airlock"
+[[ ! -e "$install_home/bin/airlock-config" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-config"
 [[ ! -e "$install_home/bin/airlock-build" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-build"
 [[ ! -e "$install_home/bin/airlock-doctor" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-doctor"
 [[ ! -e "$install_home/bin/airlock-wsl-prereqs" ]] || fail "expected symlink uninstall to remove ~/bin/airlock-wsl-prereqs"
@@ -497,6 +648,7 @@ if command -v stow >/dev/null 2>&1; then
   [[ -L "$stow_home/.airlock/image" ]] || fail "expected stowed image to be symlinked"
   [[ -L "$stow_home/bin/yolo" ]] || fail "expected stowed yolo to be a symlink"
   [[ -L "$stow_home/bin/airlock" ]] || fail "expected stowed airlock dispatcher to be a symlink"
+  [[ -L "$stow_home/bin/airlock-config" ]] || fail "expected stowed airlock-config to be a symlink"
   [[ -L "$stow_home/bin/airlock-wsl-prereqs" ]] || fail "expected stowed airlock-wsl-prereqs to be a symlink"
   [[ -e "$stow_home/.airlock/config/zshrc" ]] || fail "expected zshrc to exist under stowed config"
 
@@ -508,6 +660,7 @@ if command -v stow >/dev/null 2>&1; then
   [[ -d "$stow_home/.airlock" ]] || fail "expected .airlock directory to remain after uninstall"
   [[ ! -e "$stow_home/bin/yolo" ]] || fail "expected yolo removed after uninstall"
   [[ ! -e "$stow_home/bin/airlock" ]] || fail "expected airlock removed after uninstall"
+  [[ ! -e "$stow_home/bin/airlock-config" ]] || fail "expected airlock-config removed after uninstall"
   [[ ! -e "$stow_home/bin/airlock-wsl-prereqs" ]] || fail "expected airlock-wsl-prereqs removed after uninstall"
   [[ ! -e "$stow_home/.airlock/config" ]] || fail "expected config symlink removed after uninstall"
   [[ ! -e "$stow_home/.airlock/image" ]] || fail "expected image symlink removed after uninstall"

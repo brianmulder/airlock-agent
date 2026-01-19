@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+airlock_config="$script_dir/airlock-config"
+
+if [[ -x "$airlock_config" ]]; then
+  # shellcheck disable=SC1090
+  eval "$("$airlock_config")"
+fi
+
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
 

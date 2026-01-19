@@ -5,20 +5,16 @@ SHELL := bash
 REPO_ROOT := $(shell cd "$(dir $(lastword $(MAKEFILE_LIST)))" && pwd)
 
 # --------------------------------------------------------------------
-# Configuration knobs (override like: `make test AIRLOCK_ENGINE=docker`)
+# Configuration knobs
+#
+# Note: Airlock supports `~/.airlock/config.toml` defaults (see docs/configuration.md). To preserve
+# precedence (CLI/env > config > built-ins), this Makefile intentionally does not export any
+# Airlock defaults.
+#
+# Override per-invocation like:
+#   AIRLOCK_ENGINE=docker make test
+#   make test AIRLOCK_ENGINE=docker
 # --------------------------------------------------------------------
-export AIRLOCK_ENGINE ?= podman
-export AIRLOCK_IMAGE ?=
-export AIRLOCK_PULL ?= 1
-export AIRLOCK_BUILD_ISOLATION ?=
-export AIRLOCK_BUILD_USERNS ?=
-export AIRLOCK_NPM_VERSION ?= latest
-export AIRLOCK_CODEX_VERSION ?= latest
-export AIRLOCK_EDITOR_PKG ?= vim-tiny
-export AIRLOCK_TIMING ?= 0
-
-export AIRLOCK_SYSTEM_REBUILD ?= 0
-export AIRLOCK_SYSTEM_CLEAN_IMAGE ?= 0
 
 ## Show help (default).
 help:

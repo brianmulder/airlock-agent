@@ -19,8 +19,9 @@ Examples:
   airlock doctor
 
 Notes:
-  - `airlock dock` defaults to disabling engine socket passthrough (equivalent to AIRLOCK_MOUNT_ENGINE_SOCKET=0),
-    but you can opt in per-run via `--engine-socket` or by setting AIRLOCK_MOUNT_ENGINE_SOCKET=1.
+  - `airlock dock` selects the `dock` profile (default: engine socket passthrough off).
+    Configure defaults in `~/.airlock/config.toml` (see docs/configuration.md).
+    You can also opt in per-run via `--engine-socket` or by setting AIRLOCK_MOUNT_ENGINE_SOCKET=1.
   - `airlock yolo` prepends `--engine-socket` (and is still overridden by `--dind`, which disables socket passthrough).
 USAGE
 }
@@ -42,17 +43,16 @@ doctor="$script_dir/airlock-doctor"
 
 case "$subcmd" in
   dock)
-    # Safe default: disable host engine socket passthrough unless explicitly enabled.
-    AIRLOCK_MOUNT_ENGINE_SOCKET="${AIRLOCK_MOUNT_ENGINE_SOCKET:-0}" exec "$yolo" "$@"
+    AIRLOCK_PROFILE=dock exec "$yolo" "$@"
     ;;
   yolo)
-    exec "$yolo" --engine-socket "$@"
+    AIRLOCK_PROFILE=yolo exec "$yolo" --engine-socket "$@"
     ;;
   build)
-    exec "$build" "$@"
+    AIRLOCK_PROFILE=build exec "$build" "$@"
     ;;
   doctor)
-    exec "$doctor" "$@"
+    AIRLOCK_PROFILE=dock exec "$doctor" "$@"
     ;;
   *)
     echo "ERROR: unknown airlock command: $subcmd" >&2
@@ -61,4 +61,3 @@ case "$subcmd" in
     exit 1
     ;;
 esac
-

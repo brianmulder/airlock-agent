@@ -4,6 +4,25 @@ set -euo pipefail
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "OK: $*"; }
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+airlock_config="$script_dir/airlock-config"
+
+if [[ -x "$airlock_config" ]]; then
+  # shellcheck disable=SC1090
+  eval "$("$airlock_config")"
+fi
+
+if [[ -n "${AIRLOCK_PROFILE:-}" && -z "${AIRLOCK_MOUNT_ENGINE_SOCKET+x}" ]]; then
+  case "$AIRLOCK_PROFILE" in
+    dock)
+      AIRLOCK_MOUNT_ENGINE_SOCKET=0
+      ;;
+    yolo)
+      AIRLOCK_MOUNT_ENGINE_SOCKET=1
+      ;;
+  esac
+fi
+
 AIRLOCK_ENGINE="${AIRLOCK_ENGINE:-podman}"
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
 AIRLOCK_CONFIG_DIR="${AIRLOCK_CONFIG_DIR:-$AIRLOCK_HOME/config}"
