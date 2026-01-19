@@ -21,8 +21,10 @@ This file records “why” decisions made while building Airlock, so future ses
 - Podman builds can fail under OCI isolation in some systemd/integration environments; default to
   `podman build --isolation=chroot` (override: `AIRLOCK_BUILD_ISOLATION=...`).
 - For “containers from inside `yolo`”, Airlock prefers socket passthrough (host engine) over nested engines.
-- Rootless/userns mappings can confuse git ownership checks. The container entrypoint sets git
-  `safe.directory` for the workspace mount.
+- Airlock targets rootful engines. Rootless engines are currently unsupported (rootless Podman commonly fails
+  on UID/GID mappings and/or `/dev/net/tun` networking).
+- User namespace mappings can confuse git ownership checks. The container entrypoint sets git `safe.directory`
+  for the workspace mount.
 
 ## Workdir stability (Codex resume collisions)
 
@@ -58,6 +60,10 @@ Airlock will mount the host container engine socket when available so you can ru
 - Escape hatch: disable with `AIRLOCK_MOUNT_ENGINE_SOCKET=0`.
 - Alternative (nested): disable socket passthrough and use Podman inside the `yolo` container.
   - This is slower and may be less compatible; `AIRLOCK_PODMAN_STORAGE_DRIVER=vfs` is the most portable option.
+- Alternative (Docker-in-Docker): run a Docker daemon *inside* the `yolo` container.
+  - Opt-in: `yolo --dind` (also via `AIRLOCK_DIND=1`)
+  - Typically requires `--privileged` and a rootful outer engine (see `docs/docker-in-docker.md`).
+  - This avoids mounting the host engine socket, but is still high-trust (privileged container).
 
 ## OAuth callbacks (port publishing)
 

@@ -24,6 +24,10 @@ printf '%s\n' "hello" >"$ro_dir/hello.txt"
 
 ok "unit setup"
 
+## WSL prereq checker script exists and is runnable (logic is host-dependent, so don't assert output).
+[[ -x stow/airlock/bin/airlock-wsl-prereqs ]] || fail "expected airlock-wsl-prereqs to be executable"
+ok "airlock-wsl-prereqs: present"
+
 ## agent image: editor support for $EDITOR
 grep -q -- 'ARG EDITOR_PKG=vim-tiny' stow/airlock/.airlock/image/agent.Dockerfile || \
   fail "expected agent.Dockerfile to default EDITOR_PKG to vim-tiny"
@@ -110,18 +114,11 @@ out="$(
 printf '%s\n' "$out" | grep -q -- '--network host' || fail "expected yolo to include --network host"
 ok "yolo host networking opt-in: ok"
 
-## yolo: podman defaults userns to keep-id (when supported by the CLI)
+## yolo: podman does not default to userns=keep-id (rootless/userns is unsupported)
 fakebin_podman="$tmp/fakebin-podman"
 mkdir -p "$fakebin_podman"
 cat >"$fakebin_podman/podman" <<'SH'
 #!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "${1:-}" == "run" && "${2:-}" == "--help" ]]; then
-  echo "  --userns=keep-id    Keep host UID/GID"
-  exit 0
-fi
-
 exit 0
 SH
 chmod +x "$fakebin_podman/podman"
@@ -132,10 +129,25 @@ out="$(
   AIRLOCK_DRY_RUN=1 \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
-printf '%s\n' "$out" | grep -q -- '--userns=keep-id' || fail "expected yolo to default podman userns to keep-id when supported"
-ok "yolo podman userns default: ok"
+if printf '%s\n' "$out" | grep -q -- '--userns=keep-id'; then
+  fail "expected yolo to NOT default podman userns to keep-id"
+fi
+ok "yolo podman keep-id default: ok (absent)"
 
-## yolo: docker defaults to running as host uid:gid (prevents root-owned bind mount files)
+## yolo: --dind runs privileged
+out="$(
+  PATH="$fakebin_podman:$PATH" \
+  AIRLOCK_ENGINE=podman \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/yolo --dind -- bash -lc 'echo ok'
+)"
+printf '%s\n' "$out" | grep -q -- '--privileged' || fail "expected yolo --dind to include --privileged"
+printf '%s\n' "$out" | grep -q -- '-e AIRLOCK_DIND=1' || fail "expected yolo --dind to set AIRLOCK_DIND=1"
+printf '%s\n' "$out" | grep -q -- '-e AIRLOCK_DIND_STORAGE_DRIVER=vfs' || \
+  fail "expected yolo --dind to default AIRLOCK_DIND_STORAGE_DRIVER to vfs"
+ok "yolo dind: ok"
+
+## yolo: docker does not use --user by default (entrypoint maps uid/gid)
 fakebin="$tmp/fakebin"
 mkdir -p "$fakebin"
 cat >"$fakebin/docker" <<'SH'
@@ -150,8 +162,10 @@ out="$(
   AIRLOCK_DRY_RUN=1 \
   stow/airlock/bin/yolo -- bash -lc 'echo ok'
 )"
-printf '%s\n' "$out" | grep -q -- "--user $(id -u):$(id -g)" || fail "expected yolo to include --user uid:gid for docker by default"
-ok "yolo docker user default: ok"
+if printf '%s\n' "$out" | grep -q -- "--user $(id -u):$(id -g)"; then
+  fail "expected yolo to NOT include --user uid:gid for docker by default"
+fi
+ok "yolo docker user default: ok (absent)"
 
 ## yolo: userns override
 out="$(

@@ -8,7 +8,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Confirm the container engine is running (`${AIRLOCK_ENGINE:-podman} info`)
 - [x] Quality gate: `yolo` launches and shows the expected mounts
 - [x] Document safety notes (dos and don’ts) for daily use
-- [ ] DoD: Airlock runs end-to-end; safety guidance is documented and can be applied when desired
+- [x] DoD: Airlock runs end-to-end; safety guidance is documented and can be applied when desired
 
 ## Phase 1 — Repo Scaffold
 
@@ -57,11 +57,20 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Git ergonomics: mount git repo root to `/host<path>` and use canonical workdir to avoid tool collisions
 - [x] Git safety: container entrypoint sets `safe.directory` so `git status` works on bind mounts
 - [x] Engine passthrough: host engine socket is mounted when available so container builds can run inside `yolo`
+- [x] DinD (opt-in): `yolo --dind` runs privileged and starts `dockerd` in-container
 - [x] Quality gate (in container): with `--mount-ro`, writes fail
 - [x] Quality gate (in container): with `--add-dir`, writes succeed
 - [x] Quality gate (in container): `touch "$PWD/ok"` succeeds
 - [x] Quality gate (in container): `mount` shows only expected explicit binds
 - [x] DoD: RO mounts stay RO; RW mounts stay RW; nothing is implicit
+
+## Track — DinD Journey (Docker + Podman)
+
+- [x] Add `yolo --dind` / `AIRLOCK_DIND=1` and document usage + limitations
+- [x] Validate DinD on Docker engine (rootful; expected primary path)
+- [x] Validate DinD on rootful Podman (privileged container; no rootless userns)
+- [x] Decide rootless story: explicitly document rootless engines as “unsupported”
+- [x] Add system smoke path for DinD (so CI/dev can validate it explicitly)
 
 ## Phase 5 — Getting Started + Step-by-Step Tutorial
 
@@ -78,7 +87,7 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 - [x] Add local test entrypoints (`./scripts/test*.sh`)
 - [x] Add `AIRLOCK_ENGINE` support (`podman|docker|nerdctl`) to scripts (default: `podman`)
 - [x] Add optional Markdown linting (`.markdownlint-cli2.yaml` + `./scripts/test-lint.sh` best-effort)
-- [ ] Add GitHub Actions workflow: run lint + unit (+ smoke where possible)
+- [x] Add GitHub Actions workflow: run lint + unit (+ smoke where possible)
 - [x] Quality gate: `./scripts/test.sh` passes (or clearly SKIPs missing system deps)
 - [ ] Quality gate: CI passes on a clean runner
 - [ ] DoD: regressions are caught before merge

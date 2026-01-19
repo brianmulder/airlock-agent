@@ -97,6 +97,9 @@ Airlock itself is Linux-first and does not require WSL-specific configuration. I
 any Windows-mounted paths as “untrusted” by default: keep your workspace and writable mounts on the Linux
 filesystem, and mount Windows-backed inputs read-only (e.g., via `yolo --mount-ro ...`).
 
+Airlock targets rootful engines. If you want Docker and/or Podman running rootful inside WSL2 (and
+accessible from your user), see `docs/wsl-rootful-engines.md`.
+
 ## Note for Dropbox users
 
 Dropbox is optional. If you want a sync-backed inputs folder, mount it read-only:
@@ -149,8 +152,23 @@ Podman (daemonless). It will be slower and may be less compatible; `vfs` storage
 AIRLOCK_MOUNT_ENGINE_SOCKET=0 AIRLOCK_PODMAN_STORAGE_DRIVER=vfs yolo
 ```
 
+Or, opt into Docker-in-Docker (starts `dockerd` inside the agent container):
+
+```bash
+yolo --dind -- docker version
+```
+
+See `docs/docker-in-docker.md` for details and limitations.
+
 Note: when the host engine is Podman, `docker` talking to the Podman socket is often more reliable than
 `podman --remote` because it avoids Podman client/server version skew.
+
+Rootless engines are currently unsupported:
+
+- Airlock targets rootful engines (recommended: Docker). Rootless Podman commonly fails on UID/GID mapping
+  (`/etc/subuid`, `/etc/subgid`) and/or rootless networking (`/dev/net/tun`).
+- If you only have rootless Podman available, expect Airlock smoke tests to skip and builds to be unreliable.
+  See `docs/throwaway-container-test.md` for a detailed log of the issues we hit.
 
 ## Testing (Repo)
 
@@ -163,6 +181,8 @@ Notes:
 - If you hit missing-tool errors, run `make deps-check` (or `make deps-apt` on Debian/Ubuntu).
 - `./scripts/test-system.sh` reuses an existing `airlock-agent:local` image when present; force rebuild with
   `AIRLOCK_SYSTEM_REBUILD=1 ./scripts/test-system.sh`.
+- `./scripts/test-system-dind.sh` is an explicit smoke path for `yolo --dind` (it will skip if the engine
+  can’t run privileged containers).
 - `make help` shows the full SDLC target list.
 
 See `docs/getting-started.md` for the full tutorial.

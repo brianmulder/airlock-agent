@@ -7,3 +7,4 @@ cd "$REPO_ROOT"
 ./scripts/test-lint.sh
 ./scripts/test-unit.sh
 ./scripts/test-system.sh
+./scripts/test-system-dind.sh

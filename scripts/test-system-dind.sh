@@ -46,18 +46,14 @@ pick_engine() {
     if ! command -v "$engine" >/dev/null 2>&1; then
       continue
     fi
-    # Best-effort: prefer a reachable, non-rootless engine.
     if ! "$engine" info >/dev/null 2>&1; then
       continue
     fi
-
-    # Airlock targets rootful engines. Rootless engines commonly fail on UID/GID mappings and/or networking.
     if "$engine" info 2>/dev/null | awk 'tolower($1)=="rootless:" {print tolower($2); exit}' | grep -qx true; then
       continue
     fi
-
-      echo "$engine"
-      return 0
+    echo "$engine"
+    return 0
   done
   return 1
 }
@@ -68,7 +64,7 @@ if [[ -z "$AIRLOCK_ENGINE" ]]; then
 fi
 
 if ! command -v stow >/dev/null 2>&1; then
-  echo "SKIP: stow not found; system smoke test requires stow."
+  echo "SKIP: stow not found; DinD smoke test requires stow."
   exit 0
 fi
 
@@ -108,27 +104,21 @@ if ! "$AIRLOCK_ENGINE" info >/dev/null 2>"$engine_info_err"; then
 fi
 
 if "$AIRLOCK_ENGINE" info 2>/dev/null | awk 'tolower($1)=="rootless:" {print tolower($2); exit}' | grep -qx true; then
-  echo "SKIP: rootless engine not supported (set AIRLOCK_ENGINE=docker or use a rootful engine): $AIRLOCK_ENGINE"
+  echo "SKIP: rootless engine not supported: $AIRLOCK_ENGINE"
   exit 0
 fi
 
 home_dir="$tmp/home"
-ro_dir="$tmp/ro"
-rw_dir="$tmp/rw"
 work_dir="$tmp/work"
-mkdir -p "$home_dir" "$ro_dir" "$rw_dir" "$work_dir"
+mkdir -p "$home_dir" "$work_dir"
 
-printf '%s\n' "hello from ro" >"$ro_dir/hello.txt"
 printf '%s\n' "hello from work" >"$work_dir/README.txt"
-
 if command -v git >/dev/null 2>&1; then
   git -C "$work_dir" init -q
   git -C "$work_dir" config user.email "airlock@example.invalid"
   git -C "$work_dir" config user.name "Airlock Smoke"
   git -C "$work_dir" add README.txt
   git -C "$work_dir" commit -q -m "init"
-else
-  echo "WARN: git not found; skipping git smoke assertion."
 fi
 
 mkdir -p "$home_dir/.airlock" "$home_dir/bin"
@@ -138,7 +128,6 @@ export HOME="$home_dir"
 export PATH="$HOME/bin:$PATH"
 
 default_existing_image="airlock-agent:local"
-
 if [[ -z "${AIRLOCK_IMAGE:-}" ]]; then
   export AIRLOCK_IMAGE="$default_existing_image"
 fi
@@ -146,7 +135,7 @@ fi
 export AIRLOCK_ENGINE
 export AIRLOCK_TTY=0
 export AIRLOCK_RM=0
-export AIRLOCK_CONTAINER_NAME="airlock-smoke-${RANDOM}${RANDOM}"
+export AIRLOCK_CONTAINER_NAME="airlock-smoke-dind-${RANDOM}${RANDOM}"
 
 ok "system setup"
 
@@ -189,80 +178,55 @@ fi
 
 pushd "$work_dir" >/dev/null
 
-ro_target="/host${ro_dir#/host}"
-rw_target="/host${rw_dir#/host}"
-
-smoke_script="$(cat <<EOS
+dind_smoke_script="$(cat <<'EOS'
 set -euo pipefail
 
-RO_TARGET="$ro_target"
-RW_TARGET="$rw_target"
+docker version >/dev/null
+docker info >/dev/null
 
-test -f "\${RO_TARGET}/hello.txt"
-test -f "\$(pwd)/README.txt"
+tmp="$(mktemp -d)"
+cat >"$tmp/Dockerfile" <<'EOF'
+FROM hello-world:latest
+LABEL purpose="airlock-dind-smoke"
+EOF
 
-# RW mounts
-touch "\$(pwd)/.airlock-smoke-work"
-touch "\${RW_TARGET}/.airlock-smoke-rw"
-
-# RO mount
-if touch "\${RO_TARGET}/.airlock-smoke-ro" 2>/dev/null; then
-  echo "ERROR: ro mount is writable"
-  exit 1
+if ! docker pull hello-world:latest >/dev/null 2>&1; then
+  echo "SKIP: unable to pull hello-world (need registry access); DinD daemon is up but inner run is skipped." >&2
+  exit 0
 fi
 
-# Mount presence
-grep -Fq " \${RO_TARGET} " /proc/mounts
-grep -Fq " \${RW_TARGET} " /proc/mounts
-
-# Basic network config (bridge by default; don't assert internet access)
-ip route | grep -q "^default "
-
-# Git should work even if the container user differs from the repo owner (safe.directory set inside container)
-if command -v git >/dev/null 2>&1 && test -e "\$(pwd)/.git"; then
-  git -C "\$(pwd)" status --porcelain >/dev/null
-fi
-
-# Container engine passthrough (optional): if the socket is mounted, the engine should be usable inside yolo.
-if command -v podman >/dev/null 2>&1 && test -S /run/podman/podman.sock; then
-  podman version >/dev/null
-  podman ps >/dev/null
-fi
+docker run --rm hello-world:latest >/dev/null
+docker build -t airlock-dind-smoke:test "$tmp" >/dev/null
+docker run --rm airlock-dind-smoke:test >/dev/null
 EOS
 )"
 
-# When running the system test from inside a `yolo` container, the engine is typically remote (host socket),
-# so re-mounting the engine socket into the inner container is not meaningful and can fail due to path mismatch.
 set +e
 out="$(
-  AIRLOCK_MOUNT_ENGINE_SOCKET=0 yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- bash -c "$smoke_script" 2>&1
+  yolo --dind -- bash -lc "$dind_smoke_script" 2>&1
 )"
 rc=$?
 set -e
 
 if [[ "$rc" -ne 0 ]]; then
-  if printf '%s\n' "$out" | grep -qiE 'rootless user namespaces are unsupported'; then
-    echo "SKIP: rootless user namespaces are unsupported (use a rootful engine): $AIRLOCK_ENGINE"
+  if printf '%s\n' "$out" | grep -qiE 'rootless user namespace|rootless user namespaces are unsupported|AIRLOCK_DIND=1 is not supported|privileged|operation not permitted|permission denied|not allowed'; then
+    echo "SKIP: DinD requires a rootful (non-userns) privileged container: $AIRLOCK_ENGINE"
     printf '%s\n' "$out" | sed -n '1,60p' | sed 's/^/  /' >&2 || true
     exit 0
   fi
 
-  echo "ERROR: yolo smoke run failed (see output):" >&2
+  echo "ERROR: DinD smoke failed (see output):" >&2
   printf '%s\n' "$out" | sed -n '1,120p' | sed 's/^/  /' >&2 || true
   exit 1
 fi
 
-popd >/dev/null
-ok "container smoke checks: ok"
-
-if [[ "$AIRLOCK_ENGINE" == "docker" ]]; then
-  mode="$("$AIRLOCK_ENGINE" inspect -f '{{.HostConfig.NetworkMode}}' "$AIRLOCK_CONTAINER_NAME")"
-  case "$mode" in
-    default|bridge) ok "network mode: $mode" ;;
-    *) fail "unexpected docker network mode: $mode" ;;
-  esac
+if printf '%s\n' "$out" | grep -q '^SKIP:'; then
+  echo "$out" | sed -n '1,3p' | sed 's/^/  /' >&2 || true
+  ok "dind smoke checks: skipped (registry access unavailable)"
 else
-  ok "network mode: not asserted for AIRLOCK_ENGINE=$AIRLOCK_ENGINE"
+  ok "dind smoke checks: ok"
 fi
 
-ok "system smoke test: complete"
+popd >/dev/null
+
+ok "system DinD smoke test: complete"

@@ -15,6 +15,8 @@ chance of accidental credential exposure.
 AIRLOCK_MOUNT_ENGINE_SOCKET=0 yolo
 ```
 
+- Treat Docker-in-Docker (`yolo --dind`) as an exception: it runs the agent container privileged.
+
 ## Don’t
 
 - Don’t mount broad host paths (especially `$HOME`) into `yolo` containers.

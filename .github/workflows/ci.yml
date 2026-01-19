@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      AIRLOCK_ENGINE: docker
+      AIRLOCK_PULL: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install OS deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck stow
+
+      - name: Run tests
+        run: make test

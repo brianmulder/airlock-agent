@@ -8,7 +8,7 @@ For day-to-day operational safety notes, see `docs/dos-and-donts.md`.
 ## 1) Prerequisites
 
 - A Linux host with `sudo`.
-- A container engine (default: Podman).
+- A **rootful** container engine reachable from your user (recommended: Docker).
 - Optional but recommended: GNU Stow (for installing Airlock into `~/bin` and `~/.airlock`).
 
 Supported engines (set `AIRLOCK_ENGINE` to select):
@@ -16,6 +16,12 @@ Supported engines (set `AIRLOCK_ENGINE` to select):
 - `docker` (Docker Desktop)
 - `nerdctl` (commonly used with Rancher Desktop / containerd)
 - `podman` (Podman / Podman Desktop)
+
+Note: Airlock does **not** support rootless engines at this time (rootless Podman commonly fails on
+UID/GID mappings and/or `/dev/net/tun` networking). Use a rootful engine.
+
+WSL note: if you’re on WSL2, getting rootful Podman exposed to your user can be surprisingly fiddly.
+See `docs/wsl-rootful-engines.md` for a worked setup (systemd, sockets, tmpfiles overrides).
 
 If `podman run` feels “stuck” before the container prints anything, enable coarse timing to confirm where
 the delay is:
@@ -152,6 +158,19 @@ Example (optional engine selection):
 AIRLOCK_ENGINE=nerdctl yolo
 ```
 
+### Containers from inside `yolo` (optional)
+
+By default, Airlock will try to mount the host engine socket so you can run container builds from inside the
+agent container.
+
+If you prefer not to mount the host engine socket, you can opt into Docker-in-Docker:
+
+```bash
+yolo --dind -- bash -lc 'docker version; docker info'
+```
+
+See `docs/docker-in-docker.md` for details and limitations.
+
 Inside the container:
 
 Required:
@@ -203,7 +222,7 @@ yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- bash -lc \
 To run the full system smoke test script (stow → build → yolo), allow pulls if needed:
 
 ```bash
-AIRLOCK_PULL=1 AIRLOCK_ENGINE=podman ./scripts/test-system.sh
+AIRLOCK_PULL=1 AIRLOCK_ENGINE=docker ./scripts/test-system.sh
 ```
 
 Tip: by default `./scripts/test-system.sh` will reuse an existing `airlock-agent:local` image if present.

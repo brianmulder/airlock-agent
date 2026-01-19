@@ -35,9 +35,9 @@ if [[ "${AIRLOCK_MOUNT_ENGINE_SOCKET:-1}" != "0" ]]; then
   elif [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
     sock=""
     for candidate in \
+      "/run/podman/podman.sock" \
       "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
-      "/run/user/$(id -u)/podman/podman.sock" \
-      "/run/podman/podman.sock"
+      "/run/user/$(id -u)/podman/podman.sock"
     do
       if [[ -S "$candidate" ]]; then
         sock="$candidate"

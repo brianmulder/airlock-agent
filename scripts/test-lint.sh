@@ -14,9 +14,11 @@ shell_files=(
   scripts/test-lint.sh
   scripts/test-unit.sh
   scripts/test-system.sh
+  scripts/test-system-dind.sh
   scripts/venv.sh
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
+  stow/airlock/bin/airlock-wsl-prereqs
   stow/airlock/bin/yolo
   stow/airlock/.airlock/image/entrypoint.sh
   stow/airlock/.airlock/image/podman-wrapper.sh
@@ -44,9 +46,11 @@ exec_files=(
   scripts/test-lint.sh
   scripts/test-unit.sh
   scripts/test-system.sh
+  scripts/test-system-dind.sh
   scripts/venv.sh
   stow/airlock/bin/airlock-build
   stow/airlock/bin/airlock-doctor
+  stow/airlock/bin/airlock-wsl-prereqs
   stow/airlock/bin/yolo
   stow/airlock/.airlock/image/entrypoint.sh
   stow/airlock/.airlock/image/podman-wrapper.sh
@@ -62,6 +66,8 @@ ok "executables: ok"
 if command -v markdownlint-cli2 >/dev/null 2>&1; then
   markdownlint-cli2
   ok "markdownlint: ok"
+elif [[ "${AIRLOCK_OFFLINE:-0}" != "0" ]]; then
+  echo "WARN: AIRLOCK_OFFLINE=1 set; skipping markdown lint (would require network via npx)."
 elif command -v npx >/dev/null 2>&1; then
   err="$(mktemp)"
   if npx --yes markdownlint-cli2 >/dev/null 2>"$err"; then

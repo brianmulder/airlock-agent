@@ -30,6 +30,8 @@ Options:
   --mount-ro <DIR>    Bind-mount host DIR read-only at /host<abs>.
   --publish <SPEC>    Publish container port(s) to the host (passed to the engine as `-p SPEC`).
                       Example: --publish 1455:1455 (needed for some OAuth callbacks on WSL/Windows).
+  --dind              Enable Docker-in-Docker (starts `dockerd` inside the container).
+                      Implies `--no-engine-socket` and runs the container privileged.
   --no-engine-socket  Disable mounting the host container engine socket.
   --name <NAME>       Container name override (default: airlock-<basename of $PWD>).
   --new               Start a new container if the default name is already running.
@@ -39,11 +41,14 @@ Key env vars:
   AIRLOCK_ENGINE=podman|docker|nerdctl   Container engine command (default: podman)
   AIRLOCK_IMAGE=airlock-agent:local     Image tag to run
   AIRLOCK_NETWORK=host                  Opt-in host networking (default: bridge)
-  AIRLOCK_USERNS=...                    Optional user namespace mode (podman defaults to keep-id)
+  AIRLOCK_USERNS=...                    Optional engine user namespace mode (advanced)
   AIRLOCK_RM=0                          Keep container after exit (default: remove)
   AIRLOCK_TTY=0                         Disable -it (auto when attached to a tty)
   AIRLOCK_TIMING=1                      Print coarse timing around engine run (also enables entrypoint timing)
   AIRLOCK_DRY_RUN=1                     Print the engine command and exit
+  AIRLOCK_DIND=1                        Enable Docker-in-Docker (starts `dockerd` inside the container).
+  AIRLOCK_DIND_STORAGE_DRIVER=vfs       Docker storage driver for DinD (default: vfs).
+  AIRLOCK_DIND_DOCKERD_ARGS="..."       Extra args appended to `dockerd` (whitespace-split).
   AIRLOCK_CONFIG_DIR=...                Host Airlock config dir (default: ~/.airlock/config)
   AIRLOCK_ZSHRC=...                     Host zshrc to mount (default: ~/.airlock/config/zshrc)
   AIRLOCK_MOUNT_OPENCODE=0              Disable mounting host OpenCode state (default: enabled)
@@ -67,6 +72,7 @@ esac
 ADD_DIR_HOSTS=()
 MOUNT_RO_HOSTS=()
 PUBLISH_PORT_SPECS=()
+YOLO_DIND=0
 YOLO_NEW=0
 YOLO_NAME_OVERRIDE=""
 while (( $# > 0 )); do
@@ -115,6 +121,10 @@ while (( $# > 0 )); do
       AIRLOCK_MOUNT_ENGINE_SOCKET=0
       shift
       ;;
+    --dind)
+      YOLO_DIND=1
+      shift
+      ;;
     --new)
       YOLO_NEW=1
       shift
@@ -139,14 +149,6 @@ AIRLOCK_IMAGE="${AIRLOCK_IMAGE:-airlock-agent:local}"
 AIRLOCK_RUN_AS_HOST_USER="${AIRLOCK_RUN_AS_HOST_USER:-1}"
 
 ENGINE_NAME="$(basename "$AIRLOCK_ENGINE")"
-
-# Some engines are accessed via wrapper CLIs (e.g., `podman` wrapper dispatching to `docker` for API
-# compatibility). Only enable podman-specific defaults when the underlying CLI supports them.
-engine_supports_keep_id_userns() {
-  local help
-  help="$("$AIRLOCK_ENGINE" run --help 2>/dev/null || true)"
-  printf '%s' "$help" | grep -q 'keep-id'
-}
 
 # Hot-zone runtime state (host-local, RW)
 AIRLOCK_HOME="${AIRLOCK_HOME:-$HOME/.airlock}"
@@ -179,10 +181,19 @@ CANON_MOUNT_TARGET="/host$HOST_WORK_MOUNT_SRC"
 CANON_CONTAINER_WD="/host$HOST_WORK_DIR"
 
 # Identity
-AIRLOCK_UID="$(id -u)"
-AIRLOCK_GID="$(id -g)"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+AIRLOCK_UID="$HOST_UID"
+AIRLOCK_GID="$HOST_GID"
 AIRLOCK_USER_NAME="$(id -un 2>/dev/null || true)"
 [[ -n "$AIRLOCK_USER_NAME" ]] || AIRLOCK_USER_NAME="$AIRLOCK_UID"
+
+# Optional: keep the container running as root (useful for debugging). Default is to map to the host user
+# at runtime via the container entrypoint.
+if [[ "$AIRLOCK_RUN_AS_HOST_USER" == "0" ]]; then
+  AIRLOCK_UID=0
+  AIRLOCK_GID=0
+fi
 
 command -v "$AIRLOCK_ENGINE" >/dev/null || {
   echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
@@ -310,6 +321,17 @@ if [[ "${AIRLOCK_TTY:-}" != "0" ]] && [[ -t 0 && -t 1 ]]; then
   TTY_ARGS=(-it)
 fi
 
+# Docker-in-Docker (opt-in): start `dockerd` inside the container.
+#
+# Note: this is intentionally not the default; it typically requires --privileged, and does not rely on
+# mounting the host engine socket.
+dind_enabled=0
+if [[ "${AIRLOCK_DIND:-0}" != "0" || "$YOLO_DIND" == "1" ]]; then
+  dind_enabled=1
+  AIRLOCK_MOUNT_ENGINE_SOCKET=0
+  AIRLOCK_DIND_STORAGE_DRIVER="${AIRLOCK_DIND_STORAGE_DRIVER:-vfs}"
+fi
+
 # Remove container by default (set AIRLOCK_RM=0 to keep it).
 RM_ARGS=()
 if [[ "${AIRLOCK_RM:-1}" != "0" ]]; then
@@ -337,23 +359,13 @@ if [[ "${AIRLOCK_NETWORK:-}" == "host" ]]; then
   NETWORK_ARGS+=(--network host)
 fi
 
-# Engine-specific user namespace settings (for rootless engines like podman).
+# Engine-specific user namespace settings (primarily for Podman bind-mount ownership ergonomics).
 USERNS_ARGS=()
 if [[ -n "${AIRLOCK_USERNS:-}" ]]; then
   USERNS_ARGS+=(--userns="$AIRLOCK_USERNS")
-elif [[ "$ENGINE_NAME" == "podman" ]] && engine_supports_keep_id_userns; then
-  USERNS_ARGS+=(--userns=keep-id)
 fi
 
-# Engine-specific user settings (prevents root-owned files on bind mounts for engines that default to root).
 USER_ARGS=()
-if [[ "$AIRLOCK_RUN_AS_HOST_USER" != "0" ]]; then
-  case "$ENGINE_NAME" in
-    docker|nerdctl)
-      USER_ARGS+=(--user "$AIRLOCK_UID:$AIRLOCK_GID")
-      ;;
-  esac
-fi
 
 split_colon_list() {
   local raw="$1"
@@ -451,7 +463,7 @@ if (( ${#yolo_cmd[@]} > 0 )) && is_codex_cmd "${yolo_cmd[0]}" && (( ${#codex_add
 fi
 
 has_extra_config=0
-if [[ -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUNT_ROS:-}" || -n "${AIRLOCK_PUBLISH_PORTS:-}" || "${#ADD_DIR_HOSTS[@]}" -gt 0 || "${#MOUNT_RO_HOSTS[@]}" -gt 0 || "${#PUBLISH_PORT_SPECS[@]}" -gt 0 ]]; then
+if [[ "$dind_enabled" == "1" || -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUNT_ROS:-}" || -n "${AIRLOCK_PUBLISH_PORTS:-}" || "${#ADD_DIR_HOSTS[@]}" -gt 0 || "${#MOUNT_RO_HOSTS[@]}" -gt 0 || "${#PUBLISH_PORT_SPECS[@]}" -gt 0 ]]; then
   has_extra_config=1
 fi
 
@@ -469,6 +481,9 @@ print_summary() {
   fi
   if [[ "${#PUBLISH_PORT_ARGS[@]}" -gt 0 ]]; then
     echo "Ports:      ${PUBLISH_PORTS_ALL[*]}"
+  fi
+  if [[ "$dind_enabled" == "1" ]]; then
+    echo "DinD:       enabled (docker storage driver: ${AIRLOCK_DIND_STORAGE_DRIVER:-<unset>})"
   fi
   if [[ "$has_extra_config" == "1" ]]; then
     echo "Extras:     (see mounts/ports in dry-run or engine output)"
@@ -495,11 +510,7 @@ attach_to_running_container() {
   local exec_cmd=("$AIRLOCK_ENGINE" exec "${TTY_ARGS[@]}" -w "$CANON_CONTAINER_WD")
 
   if [[ "$AIRLOCK_RUN_AS_HOST_USER" != "0" ]]; then
-    case "$ENGINE_NAME" in
-      docker|nerdctl)
-        exec_cmd+=(--user "$AIRLOCK_UID:$AIRLOCK_GID")
-        ;;
-    esac
+    exec_cmd+=(--user "$AIRLOCK_UID:$AIRLOCK_GID")
   fi
 
   exec_cmd+=(
@@ -560,6 +571,9 @@ cmd=(
   -e "AIRLOCK_GID=$AIRLOCK_GID"
   -e "AIRLOCK_YOLO=1"
   -e "AIRLOCK_TIMING=${AIRLOCK_TIMING:-0}"
+  -e "AIRLOCK_DIND=$dind_enabled"
+  -e "AIRLOCK_DIND_STORAGE_DRIVER=${AIRLOCK_DIND_STORAGE_DRIVER:-}"
+  -e "AIRLOCK_DIND_DOCKERD_ARGS=${AIRLOCK_DIND_DOCKERD_ARGS:-}"
   -e "HOME=/home/airlock"
   -e "CODEX_HOME=/home/airlock/.codex"
   -w "$CANON_CONTAINER_WD"
@@ -597,9 +611,9 @@ if [[ "${AIRLOCK_MOUNT_ENGINE_SOCKET:-1}" != "0" ]]; then
   elif [[ "$ENGINE_NAME" == "podman" ]]; then
     sock_host=""
     for candidate in \
-      "${XDG_RUNTIME_DIR:-/run/user/$AIRLOCK_UID}/podman/podman.sock" \
-      "/run/user/$AIRLOCK_UID/podman/podman.sock" \
-      "/run/podman/podman.sock"
+      "/run/podman/podman.sock" \
+      "${XDG_RUNTIME_DIR:-/run/user/$HOST_UID}/podman/podman.sock" \
+      "/run/user/$HOST_UID/podman/podman.sock"
     do
       if [[ -S "$candidate" ]]; then
         sock_host="$candidate"
@@ -617,6 +631,10 @@ fi
 cmd+=("${extra_mounts[@]}")
 cmd+=("${ENGINE_SOCKET_MOUNTS[@]}")
 cmd+=("${ENGINE_SOCKET_ENVS[@]}")
+
+if [[ "$dind_enabled" == "1" ]]; then
+  cmd+=(--privileged)
+fi
 
 cmd+=("$AIRLOCK_IMAGE")
 

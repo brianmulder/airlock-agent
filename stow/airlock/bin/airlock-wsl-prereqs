@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ok() { echo "OK: $*"; }
+warn() { echo "WARN: $*" >&2; }
+fail() { echo "FAIL: $*" >&2; FAIL_COUNT=$((FAIL_COUNT + 1)); }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+FAIL_COUNT=0
+
+is_wsl() {
+  if [[ -r /proc/sys/kernel/osrelease ]] && grep -qi microsoft /proc/sys/kernel/osrelease; then
+    return 0
+  fi
+  if [[ -r /proc/version ]] && grep -qi microsoft /proc/version; then
+    return 0
+  fi
+  return 1
+}
+
+header() {
+  echo "--- Airlock WSL prerequisites ---"
+  echo "Date:   $(date -Iseconds 2>/dev/null || date 2>/dev/null || echo unknown)"
+  echo "User:   $(id -un 2>/dev/null || echo unknown) (uid=$(id -u), gid=$(id -g))"
+  echo "Kernel: $(uname -r 2>/dev/null || echo unknown)"
+  echo "---------------------------------"
+}
+
+check_systemd() {
+  local p1
+  p1="$(ps -p 1 -o comm= 2>/dev/null || true)"
+  if [[ "$p1" == "systemd" ]]; then
+    ok "systemd: enabled in this WSL distro"
+    return 0
+  fi
+
+  fail "systemd: not running as pid 1 (pid 1 is: ${p1:-unknown})"
+  echo "  Fix (inside WSL):" >&2
+  echo "    sudo tee /etc/wsl.conf >/dev/null <<'EOF'" >&2
+  echo "    [boot]" >&2
+  echo "    systemd=true" >&2
+  echo "    EOF" >&2
+  echo "  Then (from Windows PowerShell): wsl.exe --shutdown" >&2
+  echo "  Reopen WSL and re-run this check." >&2
+}
+
+check_groups() {
+  local groups
+  groups="$(id -nG 2>/dev/null || true)"
+  if [[ -n "$groups" ]]; then
+    ok "groups: $groups"
+  fi
+}
+
+check_docker() {
+  if ! have docker; then
+    warn "docker: not found (Docker Engine inside WSL is the recommended path)"
+    return 0
+  fi
+
+  ok "docker: found at $(command -v docker)"
+
+  local dv
+  dv="$(docker version 2>&1 || true)"
+  if printf '%s\n' "$dv" | grep -qi 'podman engine'; then
+    fail "docker: CLI appears to be Podman compatibility (podman-docker installed?)"
+    echo "  Fix: sudo apt-get remove -y podman-docker && hash -r" >&2
+    return 0
+  fi
+
+  if [[ -S /var/run/docker.sock ]]; then
+    local sock_mode sock_owner sock_group
+    sock_mode="$(stat -c '%a' /var/run/docker.sock 2>/dev/null || echo '?')"
+    sock_owner="$(stat -c '%U' /var/run/docker.sock 2>/dev/null || echo '?')"
+    sock_group="$(stat -c '%G' /var/run/docker.sock 2>/dev/null || echo '?')"
+    ok "docker socket: /var/run/docker.sock (${sock_owner}:${sock_group} mode=${sock_mode})"
+  else
+    warn "docker socket: missing at /var/run/docker.sock (daemon may not be running)"
+  fi
+
+  local di
+  di="$(docker info 2>&1 || true)"
+  if printf '%s\n' "$di" | grep -qi 'permission denied while trying to connect'; then
+    fail "docker: daemon socket not accessible from this user"
+    echo "  Fix:" >&2
+    echo "    sudo systemctl enable --now docker" >&2
+    echo "    sudo usermod -aG docker \"\$USER\"" >&2
+    echo "    # reopen your shell (or: newgrp docker)" >&2
+  elif printf '%s\n' "$di" | grep -qiE 'Cannot connect to the Docker daemon|is the docker daemon running'; then
+    fail "docker: daemon not reachable"
+    echo "  Fix: sudo systemctl enable --now docker" >&2
+  elif [[ -n "$di" ]]; then
+    ok "docker: daemon reachable"
+  fi
+}
+
+check_podman_rootful() {
+  if ! have podman; then
+    warn "podman: not found (optional; Airlock targets rootful engines)"
+    return 0
+  fi
+
+  ok "podman: found at $(command -v podman)"
+
+  if [[ -d /run/podman ]]; then
+    local dir_mode dir_owner dir_group
+    dir_mode="$(stat -c '%a' /run/podman 2>/dev/null || echo '?')"
+    dir_owner="$(stat -c '%U' /run/podman 2>/dev/null || echo '?')"
+    dir_group="$(stat -c '%G' /run/podman 2>/dev/null || echo '?')"
+    ok "/run/podman: exists (${dir_owner}:${dir_group} mode=${dir_mode})"
+
+    # The common WSL trap: /run/podman is 0700 root:root so non-root can't traverse to the socket.
+    if [[ "$dir_mode" == "700" && "$dir_owner" == "root" && "$dir_group" == "root" ]]; then
+      fail "/run/podman: not traversable by non-root (0700 root:root)"
+      echo "  Fix (see docs/wsl-rootful-engines.md):" >&2
+      echo "    echo 'D! /run/podman 0755 root root' | sudo tee /etc/tmpfiles.d/podman.conf >/dev/null" >&2
+      echo "    sudo systemd-tmpfiles --create" >&2
+      echo "    sudo systemctl restart podman.socket" >&2
+    fi
+  else
+    warn "/run/podman: missing (podman.socket may not be enabled)"
+  fi
+
+  if [[ -S /run/podman/podman.sock ]]; then
+    local sock_mode sock_owner sock_group
+    sock_mode="$(stat -c '%a' /run/podman/podman.sock 2>/dev/null || echo '?')"
+    sock_owner="$(stat -c '%U' /run/podman/podman.sock 2>/dev/null || echo '?')"
+    sock_group="$(stat -c '%G' /run/podman/podman.sock 2>/dev/null || echo '?')"
+    ok "podman socket: /run/podman/podman.sock (${sock_owner}:${sock_group} mode=${sock_mode})"
+  else
+    warn "podman socket: missing at /run/podman/podman.sock"
+    echo "  Fix:" >&2
+    echo "    sudo systemctl enable --now podman.socket" >&2
+  fi
+
+  local pi
+  pi="$(podman info 2>&1 || true)"
+  if printf '%s\n' "$pi" | grep -qiE 'rootless:\s*true'; then
+    fail "podman: appears rootless (Airlock does not support rootless engines)"
+    echo "  Fix: use rootful Docker, or expose rootful Podman via /run/podman/podman.sock (see docs/wsl-rootful-engines.md)." >&2
+  elif printf '%s\n' "$pi" | grep -qiE 'unable to connect to Podman socket|permission denied|operation not permitted'; then
+    fail "podman: cannot talk to the rootful socket as this user"
+    echo "  Likely fixes:" >&2
+    echo "    - Ensure /run/podman is traversable (0755) and podman.sock is group-accessible (0660)." >&2
+    echo "    - Add your user to the podman group and refresh groups (newgrp podman / new login)." >&2
+  elif [[ -n "$pi" ]]; then
+    ok "podman: reachable"
+  fi
+
+  # Detect podman-docker package (common cause of docker CLI confusion)
+  if have dpkg; then
+    if dpkg -s podman-docker >/dev/null 2>&1; then
+      fail "podman-docker: installed (this commonly hijacks the docker CLI)"
+      echo "  Fix: sudo apt-get remove -y podman-docker && hash -r" >&2
+    fi
+  fi
+}
+
+header
+
+if is_wsl; then
+  ok "environment: WSL detected"
+else
+  warn "environment: not detected as WSL (this script is WSL-focused, but checks may still be useful)"
+fi
+
+check_groups
+check_systemd
+check_docker
+check_podman_rootful
+
+echo "---------------------------------"
+if [[ "$FAIL_COUNT" -eq 0 ]]; then
+  ok "overall: prerequisites look good"
+  exit 0
+fi
+
+fail "overall: $FAIL_COUNT blocking issue(s) found"
+exit 1
+

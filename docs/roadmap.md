@@ -35,6 +35,18 @@ ephemeral containers.
   community-supported alternatives like `podman` and `nerdctl` when available.
   - Podman: prefer `podman build --isolation=chroot` when OCI isolation fails due to runtime integration issues.
 
+## Track — Docker-in-Docker (DinD) Journey (Docker + Podman)
+
+Airlock defaults to “Docker-outside-of-Docker” (mount the host engine socket) for convenience, but DinD is
+a useful opt-in when a user prefers not to mount the host engine socket.
+
+The goal is to support DinD across the common engine matrix with clear, testable expectations:
+
+1. Docker engine (rootful): primary DinD target. `yolo --dind` should work end-to-end.
+2. Podman rootful: secondary DinD target. `yolo --dind` should work (privileged outer container).
+3. Rootless engines: explicitly unsupported (document why + point users to Docker).
+4. Tests: add an explicit system smoke path that exercises `yolo --dind` so it can be validated in CI/dev.
+
 ## Phase 0 — Prereqs and Baseline Validation
 
 This phase is mostly “host setup”. Airlock is designed to run without special project mounts by default, but

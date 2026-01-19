@@ -81,6 +81,11 @@ smoke: deps-check ## Run system smoke test.
 	@cd "$(REPO_ROOT)" && ./scripts/test-system.sh
 .PHONY: smoke
 
+## Run system smoke test for Docker-in-Docker (`yolo --dind`).
+smoke-dind: deps-check ## Run system DinD smoke test.
+	@cd "$(REPO_ROOT)" && ./scripts/test-system-dind.sh
+.PHONY: smoke-dind
+
 ## Force smoke to rebuild the image (use after changing `stow/airlock/.airlock/image/*`).
 smoke-rebuild: deps-check ## Force rebuild and run smoke.
 	@cd "$(REPO_ROOT)" && AIRLOCK_SYSTEM_REBUILD=1 ./scripts/test-system.sh
