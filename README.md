@@ -1,90 +1,105 @@
 # Airlock
 
-Airlock is a compartmentalized dev workflow for AI-assisted coding on a Linux host + containers
-(Podman/Docker/nerdctl). It runs an ephemeral container with explicit mounts and a review-first workflow.
+> “Good fences make good neighbors.” — Robert Frost, *Mending Wall* (1914)
 
-Operational safety notes: see `docs/dos-and-donts.md` and `docs/threat-model.md`.
+Airlock is a **Linux-first container harness for AI coding agents** (Codex, OpenCode, etc.).
+It runs your agent in an **ephemeral container** and only exposes what you explicitly mount.
+
+**The point is not “read-only safety.”**
+Airlock is designed to let an agent **write directly into your repo** while keeping the rest of your host out
+of reach.
+
+## What you get
+
+- **Workspace mounted RW** at a canonical path: `/host<absolute-host-path>`
+  (repo root when inside git, so `.git/` is present)
+- **Explicit extra mounts**:
+  - `--mount-ro <dir>` for read-only inputs
+  - `--add-dir <dir>` for extra writable dirs (also forwarded to `codex --add-dir …`)
+- **Tool state + caches mounted from the host** (e.g. `~/.codex`, OpenCode state, `~/.airlock/cache`) so
+  logins and installs persist across runs
+- Works with **Docker / Podman / nerdctl** (rootful engines recommended)
+
+Docs worth reading:
+
+- `docs/getting-started.md`
+- `docs/dos-and-donts.md`
+- `docs/threat-model.md`
 
 ## Quickstart
 
-1. Install prerequisites: a container engine (GNU Stow optional).
-1. Install Airlock via GNU Stow (adjust the repo path as needed):
-
 ```bash
-mkdir -p ~/.airlock ~/bin
-sudo apt-get update && sudo apt-get install -y stow
-stow -d ~/code/github.com/brianmulder/airlock/stow -t ~ airlock
-hash -r
-```
-
-Or (recommended):
-
-```bash
+# Install (recommended)
 ./scripts/install.sh
-```
 
-If stow isn’t an option, `./scripts/install.sh` will install via symlinks; see `docs/getting-started.md`.
-
-1. Build the agent image:
-
-```bash
+# Build the image
 airlock-build
-```
 
-1. Launch from a project repo:
-
-```bash
+# From inside a project repo:
 cd ~/code/your-project
+
+# Dock into the container:
 airlock dock
-```
 
-Tip: if you run `yolo` again from the same directory while the container is still running, it will attach.
-Use `yolo --new` to start a second container.
-
-Notes:
-
-- `airlock dock` is the recommended entrypoint (safer defaults).
-- `yolo` is still available as the underlying implementation.
-
-Launch Codex:
-
-```bash
-yolo -- codex
-```
-
-Launch OpenCode:
-
-```bash
-yolo -- opencode
-```
-
-Authentication note:
-
-- By default, `yolo` mounts your host `~/.codex/` into the container (rw), so your login/config “just works”.
-- By default, `yolo` mounts your host OpenCode state (`~/.config/opencode/` and `~/.local/share/opencode/`) into the
-  container (rw), so your auth/config persists across runs.
-- If OpenCode login redirects to `http://localhost:1455/...` (OAuth callback), publish that port:
-
-```bash
-yolo --publish 1455:1455 -- opencode auth login
+# Or run an agent directly:
+airlock dock -- codex
+airlock dock -- opencode
 ```
 
 Mount additional directories explicitly:
 
 ```bash
 # Read-only inputs
-yolo --mount-ro ~/tmp/inputs -- codex
+airlock dock --mount-ro ~/tmp/inputs -- codex
 
 # Extra writable directory (also forwarded to `codex --add-dir ...`)
-yolo --add-dir ~/tmp/airlock-writes -- codex
+airlock dock --add-dir ~/tmp/airlock-writes -- codex
 ```
+
+If OpenCode login redirects to `http://localhost:1455/...` (OAuth callback), publish that port:
+
+```bash
+airlock dock --publish 1455:1455 -- opencode auth login
+```
+
+## Safety model in 30 seconds
+
+Airlock reduces accidental blast radius by making host access **explicit** — but it’s not a magical security
+sandbox.
+
+- **It protects you from:** accidental reads/writes to *unmounted* host locations (because they simply aren’t
+  there).
+- **It does not protect you from:** the agent trashing your working tree. That’s the trade. Use **Git** (and
+  branch protection / PR review) as the safety net.
+- **Engine socket passthrough is high-trust.**
+  If you enable `--engine-socket` (host Docker/Podman socket), the container can ask the host engine to start
+  *other* containers with *other* mounts/networking. Only use it when you mean it.
+
+Recommended defaults:
+
+- If you don’t need “containers from inside the container”, run with `--engine-socket=0` (aka
+  `--no-engine-socket`).
+- If you need containers *without* host socket passthrough, use DinD: `--dind` (privileged; treat as an
+  exception).
+
+High-trust convenience (“true yolo”):
+
+- `airlock yolo` (and `yolo`) are reserved for “no apologies” mode (engine socket on, and any other future
+  escalations).
+
+## Notes on integrating with what you already have
+
+- This README assumes `airlock dock` / `airlock yolo` are installed. If you installed an older revision,
+  reinstall via `./scripts/install.sh` or use `yolo` directly.
+- The engine socket flags are: `--engine-socket=0|1` (and `--no-engine-socket` as an alias for
+  `--engine-socket=0`).
 
 ## Global Agent Notes
 
-Codex also reads `~/.codex/AGENTS.md` for global instructions. A reasonable baseline for `yolo` containers:
+Codex also reads `~/.codex/AGENTS.md` for global instructions. A reasonable baseline for Airlock containers:
 
 ```markdown
-- If `$AIRLOCK_YOLO=1`, you are inside an Airlock `yolo` container.
+- If `$AIRLOCK_YOLO=1`, you are inside an Airlock container.
 - Your filesystem access is defined by explicit bind mounts; ask the user where outputs should go if unsure.
 ```
 
@@ -92,7 +107,7 @@ Engine selection examples:
 
 ```bash
 AIRLOCK_ENGINE=podman airlock-build
-AIRLOCK_ENGINE=podman yolo
+AIRLOCK_ENGINE=podman airlock dock
 AIRLOCK_EDITOR_PKG=vim-nox airlock-build
 ```
 
@@ -100,7 +115,7 @@ AIRLOCK_EDITOR_PKG=vim-nox airlock-build
 
 Airlock itself is Linux-first and does not require WSL-specific configuration. If you use it on WSL2, treat
 any Windows-mounted paths as “untrusted” by default: keep your workspace and writable mounts on the Linux
-filesystem, and mount Windows-backed inputs read-only (e.g., via `yolo --mount-ro ...`).
+filesystem, and mount Windows-backed inputs read-only (e.g., via `airlock dock --mount-ro ...`).
 
 Airlock targets rootful engines. If you want Docker and/or Podman running rootful inside WSL2 (and
 accessible from your user), see `docs/wsl-rootful-engines.md`.
@@ -110,7 +125,7 @@ accessible from your user), see `docs/wsl-rootful-engines.md`.
 Dropbox is optional. If you want a sync-backed inputs folder, mount it read-only:
 
 ```bash
-yolo --mount-ro ~/path/to/dropbox/inputs -- codex
+airlock dock --mount-ro ~/path/to/dropbox/inputs -- codex
 ```
 
 ## Repository Layout
@@ -138,32 +153,27 @@ Alternative (vendor): copy `stow/airlock/` into your dotfiles repo and run `stow
 ## Key Design Rules
 
 - By default, writable mounts are your workspace plus tool state/cache mounts (e.g., `~/.codex/`).
-- Additional project mounts are explicit (`yolo --mount-ro ...` / `yolo --add-dir ...`).
+- Additional project mounts are explicit (`airlock dock --mount-ro ...` / `airlock dock --add-dir ...`).
 - Host networking is opt-in (`AIRLOCK_NETWORK=host`).
 - `yolo` mounts the git repo root (or the current directory) at a canonical `/host<host-path>` so tools don’t conflate repos.
 
-## Containers From Inside `yolo`
+## Containers From Inside the Container
 
-Airlock mounts the host engine socket when available so you can run container builds from inside the `yolo`
-shell (e.g., `docker build ...`). This is convenient but high-trust; disable it when you don’t need it:
+If you need to build/run containers from inside the Airlock container, you have two options:
 
-```bash
-airlock dock
-# (equivalently)
-# yolo --engine-socket=0
-```
+- **Host socket passthrough** (high-trust): enable with `airlock yolo` or `--engine-socket`.
+- **Docker-in-Docker** (privileged): enable with `--dind` (does not mount the host engine socket).
 
-If you disable the socket mount and still need to build/run containers from inside `yolo`, you can try nested
-Podman (daemonless). It will be slower and may be less compatible; `vfs` storage is the most portable:
+By default, `airlock dock` disables host engine socket passthrough. If you try to run `docker`/`podman`
+without either `--engine-socket` or `--dind`, you’ll typically hit rootless user-namespace failures inside
+the container (expected).
 
 ```bash
-AIRLOCK_MOUNT_ENGINE_SOCKET=0 AIRLOCK_PODMAN_STORAGE_DRIVER=vfs yolo
-```
+# Engine socket passthrough (high-trust)
+airlock yolo -- docker version
 
-Or, opt into Docker-in-Docker (starts `dockerd` inside the agent container):
-
-```bash
-yolo --dind -- docker version
+# DinD (privileged; no host socket passthrough)
+airlock dock --dind -- docker version
 ```
 
 See `docs/docker-in-docker.md` for details and limitations.
