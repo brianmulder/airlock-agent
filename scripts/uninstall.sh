@@ -62,6 +62,7 @@ safe_unlink() {
 
 safe_unlink "$HOME/bin/yolo" "$PKG_DIR/bin/yolo"
 safe_unlink "$HOME/bin/airlock" "$PKG_DIR/bin/airlock"
+safe_unlink "$HOME/bin/airlock-config" "$PKG_DIR/bin/airlock-config"
 safe_unlink "$HOME/bin/airlock-build" "$PKG_DIR/bin/airlock-build"
 safe_unlink "$HOME/bin/airlock-doctor" "$PKG_DIR/bin/airlock-doctor"
 safe_unlink "$HOME/bin/airlock-wsl-prereqs" "$PKG_DIR/bin/airlock-wsl-prereqs"

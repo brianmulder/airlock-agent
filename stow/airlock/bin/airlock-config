@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: airlock-config [--profile <NAME>]
+
+Emit shell code (export statements) for Airlock defaults read from TOML:
+  - Default path: ~/.airlock/config.toml
+  - Override path: AIRLOCK_CONFIG_TOML=/path/to/config.toml
+
+Precedence is implemented by only setting env vars when they are currently unset:
+  CLI flags > env vars > config.toml > Airlock built-ins
+
+Profiles:
+  - Base tables: [airlock], [build]
+  - Overrides:   [profiles.<NAME>]
+
+This command is intended to be eval'd by Airlock scripts:
+  eval "$(airlock-config --profile dock)"
+USAGE
+}
+
+profile="${AIRLOCK_PROFILE:-}"
+while (( $# > 0 )); do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --profile)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --profile requires a value" >&2; exit 1; }
+      profile="$2"
+      shift 2
+      ;;
+    --profile=*)
+      profile="${1#--profile=}"
+      shift
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+config_toml="${AIRLOCK_CONFIG_TOML:-}"
+if [[ -z "$config_toml" ]]; then
+  [[ -n "${HOME:-}" ]] || exit 0
+  config_toml="$HOME/.airlock/config.toml"
+fi
+
+[[ -f "$config_toml" ]] || exit 0
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "WARN: python3 not found; config.toml disabled: $config_toml" >&2
+  echo "      Fix (Debian/Ubuntu): sudo apt-get update && sudo apt-get install -y python3" >&2
+  exit 0
+fi
+
+python3 - "$config_toml" "$profile" <<'PY'
+import sys
+import shlex
+from typing import Any
+
+config_path = sys.argv[1]
+profile = sys.argv[2] if len(sys.argv) > 2 else ""
+
+try:
+    import tomllib  # py>=3.11
+except ModuleNotFoundError:  # pragma: no cover
+    try:
+        import tomli as tomllib  # type: ignore[assignment]
+    except ModuleNotFoundError:
+        print(
+            f"WARN: python3 missing tomllib/tomli; config.toml disabled: {config_path}\n"
+            "      Fix (Debian/Ubuntu): sudo apt-get install -y python3-tomli\n"
+            "      Or: python3 -m pip install --user tomli",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+
+def as_bool01(val: Any, *, key: str) -> str:
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if isinstance(val, int):
+        return "1" if val != 0 else "0"
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return "1"
+        if v in ("0", "false", "no", "off"):
+            return "0"
+    raise ValueError(f"invalid boolean for {key}: {val!r}")
+
+
+def as_str_list(val: Any, *, key: str) -> list[str]:
+    if val is None:
+        return []
+    if isinstance(val, str):
+        s = val.strip()
+        return [s] if s else []
+    if isinstance(val, list):
+        out: list[str] = []
+        for item in val:
+            if not isinstance(item, str):
+                raise ValueError(f"invalid list item for {key}: {item!r} (expected string)")
+            s = item.strip()
+            if s:
+                out.append(s)
+        return out
+    raise ValueError(f"invalid type for {key}: {type(val).__name__}")
+
+
+try:
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+except Exception as e:
+    print(f"WARN: failed to read Airlock config TOML ({config_path}): {e}", file=sys.stderr)
+    sys.exit(0)
+
+airlock_cfg = data.get("airlock", {}) if isinstance(data, dict) else {}
+build_cfg = data.get("build", {}) if isinstance(data, dict) else {}
+
+profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
+profile_cfg: dict[str, Any] = {}
+if profile and isinstance(profiles, dict):
+    maybe = profiles.get(profile, {})
+    if isinstance(maybe, dict):
+        profile_cfg = maybe
+
+
+def merged_value(base: dict[str, Any], key: str) -> Any:
+    if key in profile_cfg:
+        return profile_cfg[key]
+    return base.get(key)
+
+
+env: dict[str, str] = {}
+
+# [airlock]
+if (v := merged_value(airlock_cfg, "engine")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_ENGINE"] = v.strip()
+    else:
+        print(f"WARN: ignoring airlock.engine (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "image")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_IMAGE"] = v.strip()
+    else:
+        print(f"WARN: ignoring airlock.image (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "network")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_NETWORK"] = v.strip()
+    else:
+        print(f"WARN: ignoring airlock.network (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "mount_opencode")) is not None:
+    try:
+        env["AIRLOCK_MOUNT_OPENCODE"] = as_bool01(v, key="airlock.mount_opencode")
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "mount_engine_socket")) is not None:
+    try:
+        env["AIRLOCK_MOUNT_ENGINE_SOCKET"] = as_bool01(v, key="airlock.mount_engine_socket")
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "add_dirs")) is not None:
+    try:
+        env["AIRLOCK_ADD_DIRS"] = ":".join(as_str_list(v, key="airlock.add_dirs"))
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "mount_ros")) is not None:
+    try:
+        env["AIRLOCK_MOUNT_ROS"] = ":".join(as_str_list(v, key="airlock.mount_ros"))
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+if (v := merged_value(airlock_cfg, "publish_ports")) is not None:
+    try:
+        env["AIRLOCK_PUBLISH_PORTS"] = ",".join(as_str_list(v, key="airlock.publish_ports"))
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+# [build]
+if (v := merged_value(build_cfg, "base_image")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_BASE_IMAGE"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.base_image (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "codex_version")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_CODEX_VERSION"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.codex_version (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "opencode_version")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_OPENCODE_VERSION"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.opencode_version (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "npm_version")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_NPM_VERSION"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.npm_version (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "editor_pkg")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_EDITOR_PKG"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.editor_pkg (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "pull")) is not None:
+    try:
+        env["AIRLOCK_PULL"] = as_bool01(v, key="build.pull")
+    except ValueError as e:
+        print(f"WARN: {e}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "build_isolation")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_BUILD_ISOLATION"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.build_isolation (expected string): {v!r}", file=sys.stderr)
+
+if (v := merged_value(build_cfg, "build_userns")) is not None:
+    if isinstance(v, str):
+        # Empty string means "unset" (use Airlock defaults).
+        if v.strip():
+            env["AIRLOCK_BUILD_USERNS"] = v.strip()
+    else:
+        print(f"WARN: ignoring build.build_userns (expected string): {v!r}", file=sys.stderr)
+
+
+def emit_if_unset(var: str, value: str) -> None:
+    # Set only if unset or empty to preserve precedence while avoiding surprises
+    # from exported-but-empty env vars (common in Makefiles):
+    # CLI flags > env vars (non-empty) > config > built-ins
+    quoted = shlex.quote(value)
+    print(f'if [ -z "${{{var}:-}}" ]; then export {var}={quoted}; fi')
+
+
+for var in sorted(env.keys()):
+    emit_if_unset(var, env[var])
+PY

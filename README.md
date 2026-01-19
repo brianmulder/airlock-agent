@@ -23,6 +23,7 @@ of reach.
 Docs worth reading:
 
 - `docs/getting-started.md`
+- `docs/configuration.md`
 - `docs/dos-and-donts.md`
 - `docs/threat-model.md`
 
@@ -149,6 +150,9 @@ stow -d vendor/airlock/stow -t ~ airlock
 ```
 
 Alternative (vendor): copy `stow/airlock/` into your dotfiles repo and run `stow -t ~ airlock`.
+
+Optional: set defaults via `~/.airlock/config.toml` (profiles for `dock` / `yolo` / `build`), especially if you
+install Airlock via dotfiles. See `docs/configuration.md`.
 
 ## Key Design Rules
 

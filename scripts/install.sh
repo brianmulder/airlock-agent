@@ -60,6 +60,7 @@ safe_symlink() {
 
 safe_symlink "$PKG_DIR/bin/yolo" "$HOME/bin/yolo"
 safe_symlink "$PKG_DIR/bin/airlock" "$HOME/bin/airlock"
+safe_symlink "$PKG_DIR/bin/airlock-config" "$HOME/bin/airlock-config"
 safe_symlink "$PKG_DIR/bin/airlock-build" "$HOME/bin/airlock-build"
 safe_symlink "$PKG_DIR/bin/airlock-doctor" "$HOME/bin/airlock-doctor"
 safe_symlink "$PKG_DIR/bin/airlock-wsl-prereqs" "$HOME/bin/airlock-wsl-prereqs"
