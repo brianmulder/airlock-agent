@@ -121,6 +121,11 @@ filesystem, and mount Windows-backed inputs read-only (e.g., via `airlock dock -
 Airlock targets rootful engines. If you want Docker and/or Podman running rootful inside WSL2 (and
 accessible from your user), see `docs/wsl-rootful-engines.md`.
 
+## Note for macOS users
+
+macOS support is currently experimental. If you want to try Airlock on macOS, start with Docker Desktop and
+Homebrew-provided GNU tools. See `docs/macos.md`.
+
 ## Note for Dropbox users
 
 Dropbox is optional. If you want a sync-backed inputs folder, mount it read-only:
