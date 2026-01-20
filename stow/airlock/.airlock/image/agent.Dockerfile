@@ -28,6 +28,18 @@ RUN apt-get update && apt-get install -y \
     podman \
     gosu \
     ca-certificates \
+    ripgrep \
+    jq \
+    fd-find \
+    less \
+    procps \
+    lsof \
+    unzip \
+    zip \
+    tree \
+    && if command -v fdfind >/dev/null 2>&1 && ! command -v fd >/dev/null 2>&1; then \
+         ln -s /usr/bin/fdfind /usr/local/bin/fd; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Keep npm current (two-way door via NPM_VERSION)
