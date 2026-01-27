@@ -21,6 +21,14 @@ AIRLOCK_CODEX_VERSION="${AIRLOCK_CODEX_VERSION:-latest}"
 # Two-way door: pin or float OpenCode CLI
 AIRLOCK_OPENCODE_VERSION="${AIRLOCK_OPENCODE_VERSION:-latest}"
 
+# Build cache control (optional)
+AIRLOCK_NO_CACHE="${AIRLOCK_NO_CACHE:-0}"
+
+# When using dist-tags like "latest", resolve to an exact version first to avoid container build caches
+# pinning "latest" forever.
+AIRLOCK_RESOLVE_LATEST="${AIRLOCK_RESOLVE_LATEST:-1}"
+AIRLOCK_NPM_REGISTRY="${AIRLOCK_NPM_REGISTRY:-https://registry.npmjs.org}"
+
 AIRLOCK_BUILD_ISOLATION="${AIRLOCK_BUILD_ISOLATION:-}"
 AIRLOCK_BUILD_USERNS="${AIRLOCK_BUILD_USERNS:-}"
 AIRLOCK_PULL="${AIRLOCK_PULL:-1}"
@@ -58,6 +66,84 @@ image_input_sha() {
 
 AIRLOCK_IMAGE_INPUT_SHA="${AIRLOCK_IMAGE_INPUT_SHA:-$(image_input_sha "$BUILD_CONTEXT")}"
 
+urlencode_npm_pkg() {
+  local pkg="$1"
+  pkg="${pkg//@/%40}"
+  pkg="${pkg//\//%2F}"
+  printf '%s' "$pkg"
+}
+
+fetch_url() {
+  local url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$url"
+  else
+    return 1
+  fi
+}
+
+resolve_npm_dist_tag() {
+  local pkg="$1"
+  local tag="$2"
+
+  local encoded url
+  encoded="$(urlencode_npm_pkg "$pkg")"
+  url="${AIRLOCK_NPM_REGISTRY%/}/${encoded}/${tag}"
+
+  local version
+  version="$(
+    fetch_url "$url" | \
+      grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' | \
+      head -n1 | \
+      sed -E 's/^"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+  )" || return 1
+  [[ -n "$version" ]] || return 1
+
+  printf '%s' "$version"
+}
+
+CODEX_VERSION_FOR_BUILD="$AIRLOCK_CODEX_VERSION"
+OPENCODE_VERSION_FOR_BUILD="$AIRLOCK_OPENCODE_VERSION"
+NPM_VERSION_FOR_BUILD="$AIRLOCK_NPM_VERSION"
+
+CODEX_VERSION_LABEL="$AIRLOCK_CODEX_VERSION"
+OPENCODE_VERSION_LABEL="$AIRLOCK_OPENCODE_VERSION"
+NPM_VERSION_LABEL="$AIRLOCK_NPM_VERSION"
+
+if [[ "$AIRLOCK_RESOLVE_LATEST" != "0" ]]; then
+  if [[ "$AIRLOCK_CODEX_VERSION" == "latest" ]]; then
+    if resolved="$(resolve_npm_dist_tag "@openai/codex" "latest")"; then
+      CODEX_VERSION_FOR_BUILD="$resolved"
+      CODEX_VERSION_LABEL="latest (resolved $resolved)"
+    else
+      echo "WARN: failed to resolve @openai/codex@latest via $AIRLOCK_NPM_REGISTRY; using literal 'latest'." >&2
+      echo "      Hint: container build caches may keep 'latest' pinned; try: AIRLOCK_NO_CACHE=1 airlock-build" >&2
+    fi
+  fi
+
+  if [[ "$AIRLOCK_OPENCODE_VERSION" == "latest" ]]; then
+    if resolved="$(resolve_npm_dist_tag "opencode-ai" "latest")"; then
+      OPENCODE_VERSION_FOR_BUILD="$resolved"
+      OPENCODE_VERSION_LABEL="latest (resolved $resolved)"
+    else
+      echo "WARN: failed to resolve opencode-ai@latest via $AIRLOCK_NPM_REGISTRY; using literal 'latest'." >&2
+      echo "      Hint: container build caches may keep 'latest' pinned; try: AIRLOCK_NO_CACHE=1 airlock-build" >&2
+    fi
+  fi
+
+  if [[ "$AIRLOCK_NPM_VERSION" == "latest" ]]; then
+    if resolved="$(resolve_npm_dist_tag "npm" "latest")"; then
+      NPM_VERSION_FOR_BUILD="$resolved"
+      NPM_VERSION_LABEL="latest (resolved $resolved)"
+    else
+      echo "WARN: failed to resolve npm@latest via $AIRLOCK_NPM_REGISTRY; using literal 'latest'." >&2
+      echo "      Hint: container build caches may keep 'latest' pinned; try: AIRLOCK_NO_CACHE=1 airlock-build" >&2
+    fi
+  fi
+fi
+
 command -v "$AIRLOCK_ENGINE" >/dev/null || {
   echo "ERROR: container engine not found: $AIRLOCK_ENGINE"
   echo "Set AIRLOCK_ENGINE=podman|docker|nerdctl (or adjust PATH)."
@@ -66,12 +152,16 @@ command -v "$AIRLOCK_ENGINE" >/dev/null || {
 
 ENGINE_BUILD_ARGS=()
 ENGINE_PULL_ARGS=()
+ENGINE_CACHE_ARGS=()
 if [[ "$AIRLOCK_PULL" == "0" ]]; then
   if [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
     ENGINE_PULL_ARGS+=(--pull-never)
   fi
 else
   ENGINE_PULL_ARGS+=(--pull)
+fi
+if [[ "$AIRLOCK_NO_CACHE" == "1" ]]; then
+  ENGINE_CACHE_ARGS+=(--no-cache)
 fi
 if [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
   # Podman can fail with OCI isolation due to runtime integration issues.
@@ -89,12 +179,13 @@ echo "--- Building Airlock agent image ---"
 echo "Engine:     $AIRLOCK_ENGINE"
 echo "Image:      $AIRLOCK_IMAGE"
 echo "Base image: $AIRLOCK_BASE_IMAGE"
-echo "Codex:      @openai/codex@$AIRLOCK_CODEX_VERSION"
-echo "OpenCode:   opencode-ai@$AIRLOCK_OPENCODE_VERSION"
-echo "npm:        npm@$AIRLOCK_NPM_VERSION"
+echo "Codex:      @openai/codex@$CODEX_VERSION_LABEL"
+echo "OpenCode:   opencode-ai@$OPENCODE_VERSION_LABEL"
+echo "npm:        npm@$NPM_VERSION_LABEL"
 echo "Editor:     $AIRLOCK_EDITOR_PKG"
 echo "Image input:$AIRLOCK_IMAGE_INPUT_SHA"
 echo "Pull:       $AIRLOCK_PULL"
+echo "No cache:   $AIRLOCK_NO_CACHE"
 if [[ "${#ENGINE_BUILD_ARGS[@]}" -gt 0 ]]; then
   echo "Engine args:${ENGINE_BUILD_ARGS[*]}"
 fi
@@ -104,11 +195,12 @@ echo "---------------------------------------"
 cmd=(
   "$AIRLOCK_ENGINE" build
   "${ENGINE_PULL_ARGS[@]}"
+  "${ENGINE_CACHE_ARGS[@]}"
   -t "$AIRLOCK_IMAGE"
   --build-arg "BASE_IMAGE=$AIRLOCK_BASE_IMAGE"
-  --build-arg "CODEX_VERSION=$AIRLOCK_CODEX_VERSION"
-  --build-arg "OPENCODE_VERSION=$AIRLOCK_OPENCODE_VERSION"
-  --build-arg "NPM_VERSION=$AIRLOCK_NPM_VERSION"
+  --build-arg "CODEX_VERSION=$CODEX_VERSION_FOR_BUILD"
+  --build-arg "OPENCODE_VERSION=$OPENCODE_VERSION_FOR_BUILD"
+  --build-arg "NPM_VERSION=$NPM_VERSION_FOR_BUILD"
   --build-arg "EDITOR_PKG=$AIRLOCK_EDITOR_PKG"
   --build-arg "AIRLOCK_IMAGE_INPUT_SHA=$AIRLOCK_IMAGE_INPUT_SHA"
   "${ENGINE_BUILD_ARGS[@]}"
