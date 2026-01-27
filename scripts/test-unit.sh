@@ -44,10 +44,13 @@ unset \
   AIRLOCK_MOUNT_OPENCODE \
   AIRLOCK_MOUNT_ROS \
   AIRLOCK_NETWORK \
+  AIRLOCK_NPM_REGISTRY \
   AIRLOCK_NPM_VERSION \
+  AIRLOCK_NO_CACHE \
   AIRLOCK_OPENCODE_VERSION \
   AIRLOCK_PROFILE \
   AIRLOCK_PULL \
+  AIRLOCK_RESOLVE_LATEST \
   AIRLOCK_RM \
   AIRLOCK_SYSTEM_CLEAN_IMAGE \
   AIRLOCK_SYSTEM_REBUILD \
@@ -572,6 +575,19 @@ printf '%s\n' "$out" | grep -q -- 'OPENCODE_VERSION=0.0.0' || fail "expected OPE
 printf '%s\n' "$out" | grep -q -- 'NPM_VERSION=9.9.9' || fail "expected NPM_VERSION build-arg"
 printf '%s\n' "$out" | grep -q -- 'EDITOR_PKG=vim-nox' || fail "expected EDITOR_PKG build-arg"
 ok "airlock-build dry-run: ok"
+
+## airlock-build: --no-cache knob
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  AIRLOCK_NO_CACHE=1 \
+  AIRLOCK_IMAGE=airlock-agent:test \
+  AIRLOCK_BASE_IMAGE=example/base:latest \
+  AIRLOCK_CODEX_VERSION=0.0.0 \
+  stow/airlock/bin/airlock-build
+)"
+printf '%s\n' "$out" | grep -q -- '--no-cache' || fail "expected airlock-build to pass --no-cache when AIRLOCK_NO_CACHE=1"
+ok "airlock-build no-cache: ok"
 
 ## airlock-build: config.toml defaults + profile overrides (requires python3 + tomllib/tomli)
 if command -v python3 >/dev/null 2>&1 && python3 - >/dev/null 2>&1 <<'PY'

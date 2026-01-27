@@ -136,6 +136,15 @@ AIRLOCK_OPENCODE_VERSION=<ver> airlock-build
 AIRLOCK_EDITOR_PKG=vim-nox airlock-build
 ```
 
+Update tip:
+
+- To pick up new Codex/OpenCode releases, rerun `airlock-build` (the image is shared across repos).
+- If your engine still uses a cached layer and you keep seeing upgrade notices, force a rebuild with:
+
+```bash
+AIRLOCK_NO_CACHE=1 airlock-build
+```
+
 ## 5) Validate the Environment
 
 Required:
