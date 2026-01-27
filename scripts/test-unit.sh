@@ -40,6 +40,7 @@ unset \
   AIRLOCK_HOST_OPENCODE_DATA_DIR \
   AIRLOCK_IMAGE \
   AIRLOCK_MOUNT_ENGINE_SOCKET \
+  AIRLOCK_MOUNT_STYLE \
   AIRLOCK_MOUNT_OPENCODE \
   AIRLOCK_MOUNT_ROS \
   AIRLOCK_NETWORK \
@@ -129,6 +130,19 @@ SH
   printf '%s\n' "$cfg_out" | grep -q -- 'AIRLOCK_MOUNT_ENGINE_SOCKET=0' || \
     fail "expected [profiles.dock] mount_engine_socket=false to set AIRLOCK_MOUNT_ENGINE_SOCKET=0"
 
+  cfg_toml_mount_style="$tmp/airlock-config-mount-style.toml"
+  cat >"$cfg_toml_mount_style" <<'TOML'
+[airlock]
+mount_style = "host-prefix"
+TOML
+  cfg_out="$(
+    AIRLOCK_CONFIG_TOML="$cfg_toml_mount_style" \
+    stow/airlock/bin/airlock-config --profile dock
+  )"
+  printf '%s\n' "$cfg_out" | grep -q -- 'AIRLOCK_MOUNT_STYLE=host-prefix' || \
+    fail "expected config.toml mount_style=host-prefix to set AIRLOCK_MOUNT_STYLE=host-prefix"
+  ok "config.toml mount_style: ok"
+
   out="$(
     PATH="$fakebin_cfg:$PATH" \
     AIRLOCK_CONFIG_TOML="$cfg_toml" \
@@ -139,8 +153,8 @@ SH
   if printf '%s\n' "$out" | grep -q -- '--network host'; then
     fail "expected [profiles.dock] network=bridge override to disable host networking"
   fi
-  printf '%s\n' "$out" | grep -q -- "-v $ro_dir:/host$ro_dir:ro" || fail "expected config.toml mount_ros to bind-mount ro"
-  printf '%s\n' "$out" | grep -q -- "-v $rw_dir:/host$rw_dir:rw" || fail "expected config.toml add_dirs to bind-mount rw"
+  printf '%s\n' "$out" | grep -q -- "-v $ro_dir:$ro_dir:ro" || fail "expected config.toml mount_ros to bind-mount ro"
+  printf '%s\n' "$out" | grep -q -- "-v $rw_dir:$rw_dir:rw" || fail "expected config.toml add_dirs to bind-mount rw"
   printf '%s\n' "$out" | grep -q -- "-p 1455:1455" || fail "expected config.toml publish_ports to publish ports"
   ok "config.toml profile dock: ok"
 
@@ -436,14 +450,28 @@ out="$(
   AIRLOCK_DRY_RUN=1 \
   stow/airlock/bin/yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- codex --profile yolo --help
 )"
-printf '%s\n' "$out" | grep -q -- "-v $ro_dir:/host$ro_dir:ro" || fail "expected yolo --mount-ro to bind-mount ro"
-printf '%s\n' "$out" | grep -q -- "-v $rw_dir:/host$rw_dir:rw" || fail "expected yolo --add-dir to bind-mount rw"
+printf '%s\n' "$out" | grep -q -- "-v $ro_dir:$ro_dir:ro" || fail "expected yolo --mount-ro to bind-mount ro"
+printf '%s\n' "$out" | grep -q -- "-v $rw_dir:$rw_dir:rw" || fail "expected yolo --add-dir to bind-mount rw"
 printf '%s\n' "$out" | grep -q -- " codex " || fail "expected yolo to run codex"
-printf '%s\n' "$out" | grep -q -- "--add-dir /host$rw_dir" || fail "expected yolo to inject codex --add-dir for rw mount"
-if printf '%s\n' "$out" | grep -q -- "--add-dir /host$ro_dir"; then
+printf '%s\n' "$out" | grep -q -- "--add-dir $rw_dir" || fail "expected yolo to inject codex --add-dir for rw mount"
+if printf '%s\n' "$out" | grep -q -- "--add-dir $ro_dir"; then
   fail "expected yolo to NOT inject codex --add-dir for ro mount"
 fi
 ok "yolo extra dirs + codex injection: ok"
+
+## yolo: host-prefixed mounts (mount everything under /host<abs>)
+out="$(
+  AIRLOCK_ENGINE=true \
+  AIRLOCK_DRY_RUN=1 \
+  stow/airlock/bin/yolo --mount-style=host-prefix --mount-ro "$ro_dir" --add-dir "$rw_dir" -- codex --profile yolo --help
+)"
+printf '%s\n' "$out" | grep -q -- "-v $ro_dir:/host$ro_dir:ro" || fail "expected yolo --mount-style=host-prefix to bind-mount ro under /host"
+printf '%s\n' "$out" | grep -q -- "-v $rw_dir:/host$rw_dir:rw" || fail "expected yolo --mount-style=host-prefix to bind-mount rw under /host"
+printf '%s\n' "$out" | grep -q -- "--add-dir /host$rw_dir" || fail "expected yolo --mount-style=host-prefix to inject codex --add-dir under /host for rw mount"
+if printf '%s\n' "$out" | grep -q -- "--add-dir /host$ro_dir"; then
+  fail "expected yolo --mount-style=host-prefix to NOT inject codex --add-dir for ro mount"
+fi
+ok "yolo --mount-style=host-prefix: ok"
 
 ## yolo: codex fails fast if host ~/.codex/config.toml is unreadable
 # Note: this is only meaningful when running as a non-root user; root can read 000 files.
@@ -516,8 +544,8 @@ if command -v git >/dev/null 2>&1; then
   )"
   popd >/dev/null
 
-  printf '%s\n' "$out" | grep -q -- "-v $workrepo:/host$workrepo:rw" || fail "expected yolo to mount git repo root at canonical /host path"
-  printf '%s\n' "$out" | grep -q -- "-w /host$workrepo/sub/dir" || fail "expected yolo to set canonical workdir to subdir within mounted repo"
+  printf '%s\n' "$out" | grep -q -- "-v $workrepo:$workrepo:rw" || fail "expected yolo to mount git repo root at canonical path"
+  printf '%s\n' "$out" | grep -q -- "-w $workrepo/sub/dir" || fail "expected yolo to set canonical workdir to subdir within mounted repo"
   ok "yolo git-root mount: ok"
 else
   echo "WARN: git not found; skipping git-root mount unit test."

@@ -159,6 +159,12 @@ if (v := merged_value(airlock_cfg, "network")) is not None:
     else:
         print(f"WARN: ignoring airlock.network (expected string): {v!r}", file=sys.stderr)
 
+if (v := merged_value(airlock_cfg, "mount_style")) is not None:
+    if isinstance(v, str) and v.strip():
+        env["AIRLOCK_MOUNT_STYLE"] = v.strip()
+    else:
+        print(f"WARN: ignoring airlock.mount_style (expected string): {v!r}", file=sys.stderr)
+
 if (v := merged_value(airlock_cfg, "mount_opencode")) is not None:
     try:
         env["AIRLOCK_MOUNT_OPENCODE"] = as_bool01(v, key="airlock.mount_opencode")

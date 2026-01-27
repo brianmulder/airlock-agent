@@ -78,7 +78,7 @@ if ! command -v "$AIRLOCK_ENGINE" >/dev/null 2>&1; then
 fi
 
 tmp=""
-if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$REPO_ROOT" == /host/* ]]; then
+if [[ "${AIRLOCK_YOLO:-0}" == "1" ]]; then
   tmp_base="$REPO_ROOT/.airlock-test-tmp"
   mkdir -p "$tmp_base"
   tmp="$(mktemp -d -p "$tmp_base")"
@@ -136,6 +136,7 @@ export AIRLOCK_ENGINE
 export AIRLOCK_TTY=0
 export AIRLOCK_RM=0
 export AIRLOCK_CONTAINER_NAME="airlock-smoke-dind-${RANDOM}${RANDOM}"
+unset AIRLOCK_MOUNT_STYLE
 
 ok "system setup"
 

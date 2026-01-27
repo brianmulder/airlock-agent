@@ -82,7 +82,7 @@ if ! command -v "$AIRLOCK_ENGINE" >/dev/null 2>&1; then
 fi
 
 tmp=""
-if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$REPO_ROOT" == /host/* ]]; then
+if [[ "${AIRLOCK_YOLO:-0}" == "1" ]]; then
   tmp_base="$REPO_ROOT/.airlock-test-tmp"
   mkdir -p "$tmp_base"
   tmp="$(mktemp -d -p "$tmp_base")"
@@ -147,6 +147,7 @@ export AIRLOCK_ENGINE
 export AIRLOCK_TTY=0
 export AIRLOCK_RM=0
 export AIRLOCK_CONTAINER_NAME="airlock-smoke-${RANDOM}${RANDOM}"
+unset AIRLOCK_MOUNT_STYLE
 
 ok "system setup"
 
@@ -189,8 +190,17 @@ fi
 
 pushd "$work_dir" >/dev/null
 
-ro_target="/host${ro_dir#/host}"
-rw_target="/host${rw_dir#/host}"
+host_ro="$ro_dir"
+host_rw="$rw_dir"
+if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_ro" == /host/* ]]; then
+  host_ro="${host_ro#/host}"
+fi
+if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_rw" == /host/* ]]; then
+  host_rw="${host_rw#/host}"
+fi
+
+ro_target="$host_ro"
+rw_target="$host_rw"
 
 smoke_script="$(cat <<EOS
 set -euo pipefail

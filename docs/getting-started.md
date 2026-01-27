@@ -37,8 +37,11 @@ Airlock does not mount arbitrary host directories by default.
 `yolo` mounts your workspace plus tool state/cache mounts (so auth and caches persist). If you want additional
 host inputs or extra writable directories, add mounts explicitly when running `yolo`:
 
-- Read-only: `yolo --mount-ro /path/to/inputs -- ...` (mounted at `/host<abs>` inside the container)
-- Read-write: `yolo --add-dir /path/to/writes -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`)
+- Read-only: `yolo --mount-ro /path/to/inputs -- ...` (mounted at `<abs>` inside the container)
+- Read-write: `yolo --add-dir /path/to/writes -- ...` (mounted at `<abs>` and forwarded to Codex as `--add-dir <abs>`)
+
+Tip: for stricter separation (all host mounts under `/host<abs>`), use `yolo --mount-style=host-prefix` or set
+`AIRLOCK_MOUNT_STYLE=host-prefix`.
 
 ## 3) Install Airlock
 
@@ -154,8 +157,8 @@ cd ~/code/your-project
 airlock dock
 ```
 
-Note: the workspace is mounted at a canonical `/host<host-path>` so Codex and git tooling don’t conflate
-sessions across different repos.
+Note: the workspace is mounted at its host absolute path (`<host-path>`) so Codex and git tooling don’t conflate
+sessions across different repos. For stricter separation, use `AIRLOCK_MOUNT_STYLE=host-prefix`.
 
 Notes:
 
@@ -230,7 +233,7 @@ This validates mounts and basic mechanics without running `codex`:
 ro_dir="$(mktemp -d)"; rw_dir="$(mktemp -d)"
 echo "hello" >"$ro_dir/hello.txt"
 yolo --mount-ro "$ro_dir" --add-dir "$rw_dir" -- bash -lc \
-  'set -e; test -f "/host'"$ro_dir"'/hello.txt"; touch "/host'"$rw_dir"'/ok"; ! touch "/host'"$ro_dir"'/nope"'
+  "set -e; test -f '$ro_dir/hello.txt'; touch '$rw_dir/ok'; ! touch '$ro_dir/nope'"
 ```
 
 To run the full system smoke test script (stow → build → yolo), allow pulls if needed:

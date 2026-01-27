@@ -123,18 +123,19 @@ Definition of done:
 
 1. Implement `yolo` to enforce invariants:
    - The workspace mount is RW and is the git repo root when inside a repo (so `.git/` is available from subdirs).
-   - Default working directory is a canonical `/host<host-path>` so tools like Codex don’t conflate different repos.
+   - Default working directory matches the host absolute path so tools like Codex don’t conflate different repos.
    - No implicit “extra” mounts. Additional host access is explicit:
-     - Read-only inputs: `yolo --mount-ro <DIR> -- ...` (mounted at `/host<abs>`).
-     - Read-write dirs: `yolo --add-dir <DIR> -- ...` (mounted at `/host<abs>` and forwarded to Codex as `--add-dir`).
+     - Read-only inputs: `yolo --mount-ro <DIR> -- ...` (mounted at `<abs>`).
+     - Read-write dirs: `yolo --add-dir <DIR> -- ...` (mounted at `<abs>` and forwarded to Codex as `--add-dir <abs>`).
+     - Optional: `AIRLOCK_MOUNT_STYLE=host-prefix` mounts host paths under `/host<abs>`.
    - Default Codex state is host `~/.codex/` (rw) so auth/config “just works”.
    - Default network = bridge; `AIRLOCK_NETWORK=host` is opt-in.
 2. Guardrails:
    - Create host directories up front to avoid root-owned folders.
    - Make `git status` work by setting git `safe.directory` inside the container.
 3. Quality gates (manual checks run inside container):
-   - With `yolo --mount-ro <DIR> -- ...`, `touch /host<DIR>/nope` fails.
-   - With `yolo --add-dir <DIR> -- ...`, `touch /host<DIR>/ok` succeeds.
+   - With `yolo --mount-ro <DIR> -- ...`, `touch <DIR>/nope` fails.
+   - With `yolo --add-dir <DIR> -- ...`, `touch <DIR>/ok` succeeds.
    - `touch "$PWD/ok"` succeeds.
    - No unintentional host path mounts are present (`mount` output only shows explicit binds).
    - Smoke test can run without the agent: `yolo -- bash -lc '...'`.

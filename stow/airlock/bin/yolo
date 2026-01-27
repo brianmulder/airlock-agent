@@ -6,7 +6,7 @@ usage() {
 Usage: yolo [options] [--] [command...]
 
 Launch an ephemeral container with explicit mounts:
-  - /host<host-path>      (rw)  workspace mount (repo root when inside git)
+  - <host-path>           (rw)  workspace mount (repo root when inside git)
   - /home/airlock/.codex  (rw)  host ~/.codex
   - /home/airlock/.config/opencode (rw) host ~/.config/opencode
   - /home/airlock/.local/share/opencode (rw) host ~/.local/share/opencode
@@ -22,12 +22,16 @@ Examples:
   yolo -- opencode
   yolo --publish 1455:1455 -- opencode auth login
   yolo --add-dir ~/tmp/airlock-writes -- codex --profile yolo
-  yolo --mount-ro ~/tmp/inputs -- bash -lc 'ls -la /host$PWD'
+  yolo --mount-ro ~/tmp/inputs -- bash -lc 'ls -la "$PWD"'
 
 Options:
-  --add-dir <DIR>     Bind-mount host DIR read-write at /host<abs>.
-                      If the command is `codex`, forwards as `--add-dir /host<abs>`.
-  --mount-ro <DIR>    Bind-mount host DIR read-only at /host<abs>.
+  --add-dir <DIR>     Bind-mount host DIR read-write at <abs> (same absolute path in the container).
+                      If the command is `codex`, forwards as `--add-dir <abs>`.
+  --mount-ro <DIR>    Bind-mount host DIR read-only at <abs> (same absolute path in the container).
+  --mount-style <STYLE>
+                      Where to place host mounts in the container:
+                        native      Mount at the same absolute path (default).
+                        host-prefix Mount under /host<abs> (recommended for stricter separation).
   --publish <SPEC>    Publish container port(s) to the host (passed to the engine as `-p SPEC`).
                       Example: --publish 1455:1455 (needed for some OAuth callbacks on WSL/Windows).
   --dind              Enable Docker-in-Docker (starts `dockerd` inside the container).
@@ -52,6 +56,7 @@ Key env vars:
   AIRLOCK_DIND=1                        Enable Docker-in-Docker (starts `dockerd` inside the container).
   AIRLOCK_DIND_STORAGE_DRIVER=vfs       Docker storage driver for DinD (default: vfs).
   AIRLOCK_DIND_DOCKERD_ARGS="..."       Extra args appended to `dockerd` (whitespace-split).
+  AIRLOCK_MOUNT_STYLE=native|host-prefix Where to place host mounts in the container (default: native)
   AIRLOCK_CONFIG_DIR=...                Host Airlock config dir (default: ~/.airlock/config)
   AIRLOCK_ZSHRC=...                     Host zshrc to mount (default: ~/.airlock/config/zshrc)
   AIRLOCK_CONFIG_TOML=...               Optional TOML defaults (default: ~/.airlock/config.toml)
@@ -82,6 +87,8 @@ if [[ -x "$airlock_config" ]]; then
   eval "$("$airlock_config")"
 fi
 
+MOUNT_STYLE="${AIRLOCK_MOUNT_STYLE:-native}"
+
 ADD_DIR_HOSTS=()
 MOUNT_RO_HOSTS=()
 PUBLISH_PORT_SPECS=()
@@ -110,6 +117,15 @@ while (( $# > 0 )); do
       ;;
     --mount-ro=*)
       MOUNT_RO_HOSTS+=("${1#--mount-ro=}")
+      shift
+      ;;
+    --mount-style)
+      [[ -n "${2:-}" ]] || { echo "ERROR: --mount-style requires a value" >&2; exit 1; }
+      MOUNT_STYLE="$2"
+      shift 2
+      ;;
+    --mount-style=*)
+      MOUNT_STYLE="${1#--mount-style=}"
       shift
       ;;
     --publish)
@@ -172,6 +188,21 @@ while (( $# > 0 )); do
   esac
 done
 
+normalize_mount_style() {
+  local raw="${1:-}"
+  case "$raw" in
+    ""|native) echo "native" ;;
+    host-prefix|host|prefixed) echo "host-prefix" ;;
+    *)
+      echo "ERROR: invalid mount style: ${raw:-<empty>}" >&2
+      echo "Hint: use --mount-style=native (default) or --mount-style=host-prefix." >&2
+      exit 1
+      ;;
+  esac
+}
+
+MOUNT_STYLE="$(normalize_mount_style "$MOUNT_STYLE")"
+
 if [[ -n "${AIRLOCK_PROFILE:-}" && -z "${AIRLOCK_MOUNT_ENGINE_SOCKET+x}" ]]; then
   case "$AIRLOCK_PROFILE" in
     dock)
@@ -197,7 +228,7 @@ AIRLOCK_CONFIG_DIR="${AIRLOCK_CONFIG_DIR:-$AIRLOCK_HOME/config}"
 # Config files (stowed)
 AIRLOCK_ZSHRC="${AIRLOCK_ZSHRC:-$AIRLOCK_CONFIG_DIR/zshrc}"
 
-# Workspace (bind-mounted to /host<abs>). If inside a git repo, mount the repo root so `.git/` is available.
+# Workspace. If inside a git repo, mount the repo root so `.git/` is available.
 WORK_DIR="$(pwd)"
 HOST_WORK_DIR="$WORK_DIR"
 if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$HOST_WORK_DIR" == /host/* ]]; then
@@ -215,9 +246,21 @@ if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$HOST_WORK_MOUNT_SRC" == /host/* ]]; then
   HOST_WORK_MOUNT_SRC="${HOST_WORK_MOUNT_SRC#/host}"
 fi
 
+mount_target_for_host_abs() {
+  local host_abs="$1"
+  case "$MOUNT_STYLE" in
+    native) echo "$host_abs" ;;
+    host-prefix) echo "/host$host_abs" ;;
+    *)
+      echo "ERROR: unhandled mount style (this is a bug): $MOUNT_STYLE" >&2
+      exit 1
+      ;;
+  esac
+}
+
 # Canonical workdir path (helps tools like Codex disambiguate sessions across repos).
-CANON_MOUNT_TARGET="/host$HOST_WORK_MOUNT_SRC"
-CANON_CONTAINER_WD="/host$HOST_WORK_DIR"
+CANON_MOUNT_TARGET="$(mount_target_for_host_abs "$HOST_WORK_MOUNT_SRC")"
+CANON_CONTAINER_WD="$(mount_target_for_host_abs "$HOST_WORK_DIR")"
 
 # Identity
 HOST_UID="$(id -u)"
@@ -447,24 +490,21 @@ fi
 
 extra_mounts=()
 codex_add_dirs=()
+EXTRA_MOUNT_TARGETS=()
 for d in "${ENV_MOUNT_RO_HOSTS[@]}" "${MOUNT_RO_HOSTS[@]}"; do
   [[ -d "$d" ]] || { echo "ERROR: --mount-ro is not a directory: $d" >&2; exit 1; }
   abs="$(cd "$d" && pwd -P)"
-  host_abs="$abs"
-  if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_abs" == /host/* ]]; then
-    host_abs="${host_abs#/host}"
-  fi
-  target="/host$host_abs"
+  host_abs="$(hostify_mount_src "$abs")"
+  target="$(mount_target_for_host_abs "$host_abs")"
+  EXTRA_MOUNT_TARGETS+=("$target")
   extra_mounts+=(-v "$host_abs":"$target":ro)
 done
 for d in "${ENV_ADD_DIR_HOSTS[@]}" "${ADD_DIR_HOSTS[@]}"; do
   [[ -d "$d" ]] || { echo "ERROR: --add-dir is not a directory: $d" >&2; exit 1; }
   abs="$(cd "$d" && pwd -P)"
-  host_abs="$abs"
-  if [[ "${AIRLOCK_YOLO:-0}" == "1" && "$host_abs" == /host/* ]]; then
-    host_abs="${host_abs#/host}"
-  fi
-  target="/host$host_abs"
+  host_abs="$(hostify_mount_src "$abs")"
+  target="$(mount_target_for_host_abs "$host_abs")"
+  EXTRA_MOUNT_TARGETS+=("$target")
   extra_mounts+=(-v "$host_abs":"$target":rw)
   codex_add_dirs+=(--add-dir "$target")
 done
@@ -506,11 +546,38 @@ if [[ "$dind_enabled" == "1" || -n "${AIRLOCK_ADD_DIRS:-}" || -n "${AIRLOCK_MOUN
   has_extra_config=1
 fi
 
+warn_mount_style() {
+  [[ "$MOUNT_STYLE" == "native" ]] || return 0
+
+  if [[ "${AIRLOCK_YOLO:-0}" == "1" ]]; then
+    warn "running inside yolo (AIRLOCK_YOLO=1) with mount style 'native'."
+    warn "Recommendation: rerun with host-prefixed mounts for clearer separation:"
+    warn "  yolo --mount-style=host-prefix ..."
+  fi
+
+  if [[ "$CANON_MOUNT_TARGET" == "/home/airlock" || "$CANON_MOUNT_TARGET" == /home/airlock/.* ]]; then
+    warn "workspace mount target overlaps /home/airlock state path: $CANON_MOUNT_TARGET"
+    warn "Recommendation: rerun with host-prefixed mounts:"
+    warn "  yolo --mount-style=host-prefix ..."
+  fi
+
+  local t
+  for t in "${EXTRA_MOUNT_TARGETS[@]:-}"; do
+    if [[ "$t" == "/home/airlock" || "$t" == /home/airlock/.* ]]; then
+      warn "extra mount target overlaps /home/airlock state path: $t"
+      warn "Recommendation: rerun with host-prefixed mounts:"
+      warn "  yolo --mount-style=host-prefix ..."
+      break
+    fi
+  done
+}
+
 print_summary() {
   local name="$1"
   echo "--- Airlock YOLO ---"
   echo "Engine:     $AIRLOCK_ENGINE"
   echo "Image:      $AIRLOCK_IMAGE"
+  echo "MountStyle: $MOUNT_STYLE"
   echo "Workspace:  $WORK_DIR (mounted: $HOST_WORK_MOUNT_SRC) -> $CANON_MOUNT_TARGET (rw)"
   echo "Workdir:    $CANON_CONTAINER_WD"
   echo "CODEX_HOME: /home/airlock/.codex <= $CODEX_HOME_LABEL"
@@ -595,6 +662,7 @@ if [[ "${AIRLOCK_DRY_RUN:-0}" != "1" ]]; then
   fi
 fi
 
+warn_mount_style
 print_summary "$AIRLOCK_CONTAINER_NAME"
 
 cmd=(
