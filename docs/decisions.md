@@ -31,13 +31,15 @@ This file records “why” decisions made while building Airlock, so future ses
 Mounting everything at the same in-container path makes different repos look identical to tools that key state
 off the cwd.
 
-- The default container cwd is a canonical `/host<host-path>` so state can’t collide between repos.
+- The default container cwd matches the host absolute path (`<host-path>`) so state can’t collide between repos.
+- Optional: `AIRLOCK_MOUNT_STYLE=host-prefix` mounts host paths under `/host<abs>` for stricter separation.
 
 ## Extra mounts (make them explicit)
 
-- `yolo --mount-ro <DIR> -- ...` binds a host directory read-only at `/host<abs>`.
-- `yolo --add-dir <DIR> -- ...` binds a host directory read-write at `/host<abs>`.
-  - If the command is `codex`, Airlock also forwards each writable mount to Codex as `--add-dir /host<abs>`.
+- `yolo --mount-ro <DIR> -- ...` binds a host directory read-only at `<abs>` (same absolute path in the container).
+- `yolo --add-dir <DIR> -- ...` binds a host directory read-write at `<abs>` (same absolute path in the container).
+  - If the command is `codex`, Airlock also forwards each writable mount to Codex as `--add-dir <abs>`.
+- Optional: `AIRLOCK_MOUNT_STYLE=host-prefix` mounts extra dirs under `/host<abs>`.
 
 ## Default mounts (state and cache)
 

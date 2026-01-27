@@ -11,8 +11,9 @@ of reach.
 
 ## What you get
 
-- **Workspace mounted RW** at a canonical path: `/host<absolute-host-path>`
+- **Workspace mounted RW** at its host absolute path: `<absolute-host-path>`
   (repo root when inside git, so `.git/` is present)
+  - Optional: `AIRLOCK_MOUNT_STYLE=host-prefix` (or `yolo --mount-style=host-prefix`) mounts under `/host<abs>`.
 - **Explicit extra mounts**:
   - `--mount-ro <dir>` for read-only inputs
   - `--add-dir <dir>` for extra writable dirs (also forwarded to `codex --add-dir …`)
@@ -159,7 +160,7 @@ install Airlock via dotfiles. See `docs/configuration.md`.
 - By default, writable mounts are your workspace plus tool state/cache mounts (e.g., `~/.codex/`).
 - Additional project mounts are explicit (`airlock dock --mount-ro ...` / `airlock dock --add-dir ...`).
 - Host networking is opt-in (`AIRLOCK_NETWORK=host`).
-- `yolo` mounts the git repo root (or the current directory) at a canonical `/host<host-path>` so tools don’t conflate repos.
+- `yolo` mounts the git repo root (or the current directory) at its host absolute path so tools don’t conflate repos.
 
 ## Containers From Inside the Container
 

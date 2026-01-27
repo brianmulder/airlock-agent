@@ -50,13 +50,13 @@ Use this file as the task-level checklist for implementing the Airlock repo and 
 
 ## Phase 4 — Launcher (`yolo`) + Mount Boundaries
 
-- [x] `yolo` mounts workspace at `/host<host-path>` (rw) and uses a canonical `/host<host-path>` workdir by default
-- [x] `yolo --mount-ro <DIR>`: bind-mounts host inputs read-only at `/host<abs>`
-- [x] `yolo --add-dir <DIR>`: bind-mounts host outputs read-write at `/host<abs>` and forwards to Codex as `--add-dir`
+- [x] `yolo` mounts workspace at `<host-path>` (rw) and uses `<host-path>` as the container workdir by default
+- [x] `yolo --mount-ro <DIR>`: bind-mounts host inputs read-only at `<abs>`
+- [x] `yolo --add-dir <DIR>`: bind-mounts host outputs read-write at `<abs>` and forwards to Codex as `--add-dir`
 - [x] Default Codex state: mount host `~/.codex/` (rw) into container
 - [x] Default network = bridge; `AIRLOCK_NETWORK=host` is opt-in
 - [x] Guardrail: pre-create host dirs to avoid root-owned folders
-- [x] Git ergonomics: mount git repo root to `/host<path>` and use canonical workdir to avoid tool collisions
+- [x] Git ergonomics: mount git repo root to its host absolute path and use that as workdir to avoid tool collisions
 - [x] Git safety: container entrypoint sets `safe.directory` so `git status` works on bind mounts
 - [x] Engine passthrough: host engine socket is mounted when available so container builds can run inside `yolo`
 - [x] DinD (opt-in): `yolo --dind` runs privileged and starts `dockerd` in-container

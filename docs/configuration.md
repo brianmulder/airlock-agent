@@ -34,6 +34,7 @@ Profiles are defined as `[profiles.<NAME>]` and override keys from `[airlock]` /
 engine = "podman"                 # AIRLOCK_ENGINE
 image = "airlock-agent:local"     # AIRLOCK_IMAGE
 network = "bridge"                # AIRLOCK_NETWORK ("host" enables host networking)
+mount_style = "native"            # AIRLOCK_MOUNT_STYLE ("host-prefix" mounts under /host<abs>)
 mount_opencode = true             # AIRLOCK_MOUNT_OPENCODE (0/1)
 mount_engine_socket = false       # AIRLOCK_MOUNT_ENGINE_SOCKET (0/1)
 add_dirs = []                     # AIRLOCK_ADD_DIRS (colon-joined)
