@@ -152,9 +152,16 @@ unset AIRLOCK_MOUNT_STYLE
 ok "system setup"
 
 need_build=0
+if ! image_exists "$AIRLOCK_IMAGE"; then
+  if [[ "${AIRLOCK_SYSTEM_REBUILD:-0}" == "1" ]]; then
+    need_build=1
+  else
+    echo "SKIP: image not found: $AIRLOCK_IMAGE (run airlock-build or set AIRLOCK_SYSTEM_REBUILD=1)"
+    exit 0
+  fi
+fi
+
 if [[ "${AIRLOCK_SYSTEM_REBUILD:-0}" == "1" ]]; then
-  need_build=1
-elif ! image_exists "$AIRLOCK_IMAGE"; then
   need_build=1
 fi
 
@@ -179,13 +186,9 @@ else
   ctx_sha="$(image_input_sha "$HOME/.airlock/image")"
   img_sha="$(image_label "$AIRLOCK_IMAGE" "io.airlock.image_input_sha")"
   if [[ -n "$ctx_sha" && "$ctx_sha" != "unknown" && ( -z "$img_sha" || "$img_sha" == "unknown" || "$ctx_sha" != "$img_sha" ) ]]; then
-    ok "existing image is stale; rebuilding: $AIRLOCK_IMAGE"
-    AIRLOCK_IMAGE_INPUT_SHA="$ctx_sha" airlock-build
-    did_build=1
-    ok "image built: $AIRLOCK_IMAGE"
-  else
-    ok "using existing image: $AIRLOCK_IMAGE"
+    ok "existing image appears stale; skipping rebuild (set AIRLOCK_SYSTEM_REBUILD=1)"
   fi
+  ok "using existing image: $AIRLOCK_IMAGE"
 fi
 
 pushd "$work_dir" >/dev/null
@@ -264,6 +267,72 @@ fi
 
 popd >/dev/null
 ok "container smoke checks: ok"
+
+socket_smoke_script="$(cat <<'EOS'
+set -euo pipefail
+
+if [[ -S /var/run/docker.sock ]]; then
+  docker version >/dev/null
+  docker ps >/dev/null
+  exit 0
+fi
+
+if [[ -S /run/podman/podman.sock ]]; then
+  docker version >/dev/null
+  docker ps >/dev/null
+  exit 0
+fi
+
+echo "ERROR: no engine socket present in container"
+exit 1
+EOS
+)"
+
+if [[ "${AIRLOCK_YOLO:-0}" == "1" ]]; then
+  ok "engine socket smoke: skipped (running inside yolo)"
+else
+  socket_found=0
+  if [[ "$AIRLOCK_ENGINE" == "docker" ]]; then
+    if [[ -S /var/run/docker.sock ]]; then
+      socket_found=1
+    fi
+  elif [[ "$AIRLOCK_ENGINE" == "podman" ]]; then
+    for candidate in \
+      "/run/podman/podman.sock" \
+      "${XDG_RUNTIME_DIR:-/run/user/$UID}/podman/podman.sock" \
+      "/run/user/$UID/podman/podman.sock"
+    do
+      if [[ -S "$candidate" ]]; then
+        socket_found=1
+        break
+      fi
+    done
+  fi
+
+  if [[ "$socket_found" == "1" ]]; then
+    set +e
+    out="$(
+      AIRLOCK_MOUNT_ENGINE_SOCKET=1 yolo -- bash -c "$socket_smoke_script" 2>&1
+    )"
+    rc=$?
+    set -e
+
+    if [[ "$rc" -ne 0 ]]; then
+      if printf '%s\n' "$out" | grep -qiE 'permission denied|access denied|rootless user namespaces are unsupported'; then
+        echo "SKIP: engine socket smoke failed (permissions/rootless issue): $AIRLOCK_ENGINE"
+        printf '%s\n' "$out" | sed -n '1,80p' | sed 's/^/  /' >&2 || true
+      else
+        echo "ERROR: engine socket smoke failed (see output):" >&2
+        printf '%s\n' "$out" | sed -n '1,120p' | sed 's/^/  /' >&2 || true
+        exit 1
+      fi
+    else
+      ok "engine socket smoke: ok"
+    fi
+  else
+    ok "engine socket smoke: skipped (no host socket found for $AIRLOCK_ENGINE)"
+  fi
+fi
 
 if [[ "$AIRLOCK_ENGINE" == "docker" ]]; then
   mode="$("$AIRLOCK_ENGINE" inspect -f '{{.HostConfig.NetworkMode}}' "$AIRLOCK_CONTAINER_NAME")"

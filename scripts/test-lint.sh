@@ -73,15 +73,10 @@ if command -v markdownlint-cli2 >/dev/null 2>&1; then
 elif [[ "${AIRLOCK_OFFLINE:-0}" != "0" ]]; then
   echo "WARN: AIRLOCK_OFFLINE=1 set; skipping markdown lint (would require network via npx)."
 elif command -v npx >/dev/null 2>&1; then
-  err="$(mktemp)"
-  if npx --yes markdownlint-cli2 >/dev/null 2>"$err"; then
-    ok "markdownlint: ok (via npx)"
-  else
-    echo "WARN: markdownlint-cli2 unavailable (npx run failed); skipping markdown lint."
-    sed -n '1,12p' "$err" | sed 's/^/  /' >&2 || true
-    echo "  Hint: install once to avoid npx downloads: npm i -g markdownlint-cli2" >&2
-  fi
-  rm -f "$err" || true
+  # Use npx as a hermetic runner: no global install required, and it uses npm cache between runs.
+  # If markdownlint finds issues, this should fail the lint step (don't hide signals).
+  npx --yes markdownlint-cli2
+  ok "markdownlint: ok (via npx)"
 else
-  echo "WARN: npx not found; skipping markdown lint."
+  fail "markdownlint-cli2 not found and npx unavailable (install markdownlint-cli2 or ensure npx is present)"
 fi
