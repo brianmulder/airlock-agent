@@ -141,9 +141,16 @@ unset AIRLOCK_MOUNT_STYLE
 ok "system setup"
 
 need_build=0
+if ! image_exists "$AIRLOCK_IMAGE"; then
+  if [[ "${AIRLOCK_SYSTEM_REBUILD:-0}" == "1" ]]; then
+    need_build=1
+  else
+    echo "SKIP: image not found: $AIRLOCK_IMAGE (run airlock-build or set AIRLOCK_SYSTEM_REBUILD=1)"
+    exit 0
+  fi
+fi
+
 if [[ "${AIRLOCK_SYSTEM_REBUILD:-0}" == "1" ]]; then
-  need_build=1
-elif ! image_exists "$AIRLOCK_IMAGE"; then
   need_build=1
 fi
 
@@ -168,13 +175,9 @@ else
   ctx_sha="$(image_input_sha "$HOME/.airlock/image")"
   img_sha="$(image_label "$AIRLOCK_IMAGE" "io.airlock.image_input_sha")"
   if [[ -n "$ctx_sha" && "$ctx_sha" != "unknown" && ( -z "$img_sha" || "$img_sha" == "unknown" || "$ctx_sha" != "$img_sha" ) ]]; then
-    ok "existing image is stale; rebuilding: $AIRLOCK_IMAGE"
-    AIRLOCK_IMAGE_INPUT_SHA="$ctx_sha" airlock-build
-    did_build=1
-    ok "image built: $AIRLOCK_IMAGE"
-  else
-    ok "using existing image: $AIRLOCK_IMAGE"
+    ok "existing image appears stale; skipping rebuild (set AIRLOCK_SYSTEM_REBUILD=1)"
   fi
+  ok "using existing image: $AIRLOCK_IMAGE"
 fi
 
 pushd "$work_dir" >/dev/null
