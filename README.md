@@ -1,6 +1,15 @@
 # Airlock
 
-> “Good fences make good neighbors.” — Robert Frost, *Mending Wall* (1914)
+> [!IMPORTANT]
+> **Deprecated:** Airlock is no longer maintained.
+>
+> For ordinary local agent work, use the sandboxing built into your coding
+> agent. For stronger isolation or container-building workloads, consider
+> [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/).
+>
+> This repository remains available as a historical reference.
+
+“Good fences make good neighbors.” — Robert Frost, *Mending Wall* (1914)
 
 Airlock is a **Linux-first container harness for AI coding agents** (Codex, OpenCode, etc.).
 It runs your agent in an **ephemeral container** and only exposes what you explicitly mount.
